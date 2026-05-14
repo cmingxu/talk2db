@@ -1,0 +1,15 @@
+[Unit]
+Description=Talk2DB - AI-powered SQL assistant
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/talk2db
+EnvironmentFile=/opt/talk2db/env
+ExecStart=/opt/talk2db/bin/talk2db
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
