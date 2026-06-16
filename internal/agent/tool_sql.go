@@ -100,11 +100,7 @@ func NewSQLExecuteTool(reg *datasource.Registry, dsID int64) (tool.InvokableTool
 			}
 
 			var result [][]string
-			limit := 1000
 			for rows.Next() {
-				if len(result) >= limit {
-					break
-				}
 				values := make([]any, len(columns))
 				valuePtrs := make([]any, len(columns))
 				for i := range values {
