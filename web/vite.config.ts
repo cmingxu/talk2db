@@ -7,6 +7,7 @@ export default defineConfig({
   build: {
     outDir: '../webui/dist',
     emptyOutDir: true,
+    target: ['chrome90'],
   },
   server: {
     proxy: {

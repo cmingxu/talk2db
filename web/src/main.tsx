@@ -1,3 +1,4 @@
+import './polyfills' // Must be first — polyfills for Chrome 90 compatibility
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
