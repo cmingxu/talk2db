@@ -7,7 +7,7 @@ import { Label } from '../components/ui/label';
 import { useToast } from '../hooks/use-toast';
 import { listDatasources, createDatasource, deleteDatasource, type Datasource, type DatasourceCreate } from '../api/datasources';
 
-const ENGINES = ['mysql', 'oracle', 'postgres'];
+const ENGINES = ['mysql', 'oracle', 'postgres', 'dameng'];
 
 export default function DatasourceListPage() {
   const [datasources, setDatasources] = useState<Datasource[]>([]);
@@ -37,7 +37,7 @@ export default function DatasourceListPage() {
     catch (e: any) { toast({ title: '错误', description: e.message, variant: 'destructive' }); }
   };
 
-  const defaultPort = (engine: string) => engine === 'mysql' ? 3306 : engine === 'oracle' ? 1521 : 5432;
+  const defaultPort = (engine: string) => engine === 'mysql' ? 3306 : engine === 'oracle' ? 1521 : engine === 'dameng' ? 5236 : 5432;
 
   return (
     <div className="space-y-6 pb-10">

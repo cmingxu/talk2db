@@ -43,6 +43,7 @@ func NewRegistry() *Registry {
 	r.drivers["mysql"] = &mysqlDriver{}
 	r.drivers["postgres"] = &postgresDriver{}
 	r.drivers["oracle"] = &oracleDriver{}
+	r.drivers["dameng"] = &damengDriver{}
 	return r
 }
 
