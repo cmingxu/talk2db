@@ -12,6 +12,7 @@ import (
 	"talk2db/internal/datasource"
 	"talk2db/internal/db"
 	"talk2db/internal/models"
+	"talk2db/internal/skill"
 	"talk2db/webui"
 )
 
@@ -20,6 +21,7 @@ type Config struct {
 	Registry      *datasource.Registry
 	AgentFactory  *agent.AgentFactory
 	SessionSecret string
+	SkillsDir     string // skill 包目录路径，为空则默认 "skills"
 }
 
 func New(cfg Config) http.Handler {
@@ -196,8 +198,36 @@ func New(cfg Config) http.Handler {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
+	// ── Skills ─────────────────────────────────────────────────
+	skillsDir := cfg.SkillsDir
+	if skillsDir == "" {
+		skillsDir = "skills"
+	}
+	skillReg := skill.NewRegistry()
+	skillRunner := skill.NewRunner(skillsDir)
+
+	loader := &skill.Loader{}
+	loadedSkills, err := loader.LoadAll(skillsDir)
+	if err != nil {
+		log.Printf("[Skills] Failed to load skills from %s: %v", skillsDir, err)
+	} else if len(loadedSkills) > 0 {
+		if err := skillReg.Register(loadedSkills); err != nil {
+			log.Printf("[Skills] Failed to register skills: %v", err)
+		} else {
+			log.Printf("[Skills] Loaded %d skills with %d tools from %s", len(loadedSkills), len(skillReg.AllToolNames()), skillsDir)
+		}
+	}
+
 	// ── Chat ────────────────────────────────────────────────
-	ch := &chatHandler{store: cfg.DB, registry: cfg.Registry, agentFactory: cfg.AgentFactory, sessionStore: sessionStore, memoryStore: agent.GetMemoryStore()}
+	ch := &chatHandler{
+		store:         cfg.DB,
+		registry:      cfg.Registry,
+		agentFactory:  cfg.AgentFactory,
+		sessionStore:  sessionStore,
+		memoryStore:   agent.GetMemoryStore(),
+		skillRegistry: skillReg,
+		skillRunner:   skillRunner,
+	}
 	api.GET("/sessions/:id/messages", ch.messages)
 	api.POST("/sessions/:id/chat", ch.chat)
 

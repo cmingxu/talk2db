@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/sessions"
 
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 
 	"talk2db/internal/agent"
@@ -17,14 +18,17 @@ import (
 	"talk2db/internal/datasource"
 	"talk2db/internal/logger"
 	"talk2db/internal/models"
+	"talk2db/internal/skill"
 )
 
 type chatHandler struct {
-	store        *db.Store
-	registry     *datasource.Registry
-	agentFactory *agent.AgentFactory
-	sessionStore sessions.Store
-	memoryStore  *agent.MemoryStore
+	store         *db.Store
+	registry      *datasource.Registry
+	agentFactory  *agent.AgentFactory
+	sessionStore  sessions.Store
+	memoryStore   *agent.MemoryStore
+	skillRegistry *skill.Registry
+	skillRunner   *skill.Runner
 }
 
 func (h *chatHandler) messages(c *gin.Context) {
@@ -148,6 +152,14 @@ func (h *chatHandler) chat(c *gin.Context) {
 	// Build system prompt
 	systemPrompt := agent.BuildSystemPrompt(c.Request.Context(), h.registry, ds, tableSpaces)
 
+	// Append skill prompts
+	if h.skillRegistry != nil {
+		skillPrompt := buildSkillPrompt(h.skillRegistry)
+		if skillPrompt != "" {
+			systemPrompt += "\n\n" + skillPrompt
+		}
+	}
+
 	// Get LLM config
 	llmCfg, err := h.store.GetLLMConfig(c.Request.Context())
 	if err != nil {
@@ -165,21 +177,46 @@ func (h *chatHandler) chat(c *gin.Context) {
 		return
 	}
 
-	// Create model and tool
+	// Create model and tools
 	chatModel := agent.NewOpenAIChatModel(llmCfg.BaseURL, llmCfg.APIKey, llmCfg.ModelName)
+
+	// 1. execute_sql tool (always present)
 	sqlTool, err := agent.NewSQLExecuteTool(h.registry, ds.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	toolInfo, err := sqlTool.Info(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	// 2. Skill tools
+	var allTools []tool.InvokableTool
+	allTools = append(allTools, sqlTool)
+
+	// 收集 skill tool 的 name → InvokableTool 映射，供执行阶段使用
+	skillToolMap := make(map[string]tool.InvokableTool)
+	if h.skillRegistry != nil {
+		for _, sk := range h.skillRegistry.AllSkills() {
+			for _, st := range sk.Tools {
+				einoTool := skill.NewEinoTool(h.skillRunner, &st)
+				allTools = append(allTools, einoTool)
+				skillToolMap[st.Name] = einoTool
+			}
+		}
 	}
 
-	tooledModel, err := chatModel.WithTools([]*schema.ToolInfo{toolInfo})
+	// 3. 收集所有 tool info 并绑定到 model
+	var toolInfos []*schema.ToolInfo
+	for _, t := range allTools {
+		info, err := t.Info(c.Request.Context())
+		if err != nil {
+			logger.Error("skill_setup", "failed to get tool info", map[string]any{
+				"error": err.Error(),
+			})
+			continue
+		}
+		toolInfos = append(toolInfos, info)
+	}
+
+	tooledModel, err := chatModel.WithTools(toolInfos)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -241,7 +278,17 @@ func (h *chatHandler) chat(c *gin.Context) {
 					"arguments": toolArgs,
 				})
 
-				resultJSON, toolErr := sqlTool.InvokableRun(ctx, toolArgs)
+				var resultJSON string
+				var toolErr error
+
+				if skTool, ok := skillToolMap[toolName]; ok {
+					// Skill tool: LLM 传入的 toolArgs 已是扁平参数 JSON，
+					// 直接传给 InvokableRun
+					resultJSON, toolErr = skTool.InvokableRun(ctx, toolArgs)
+				} else {
+					// 默认：execute_sql tool
+					resultJSON, toolErr = sqlTool.InvokableRun(ctx, toolArgs)
+				}
 				if toolErr != nil {
 					logger.Error("chat_response", "tool execution failed", map[string]any{
 						"session_id": sessionID,
@@ -386,4 +433,28 @@ func (h *chatHandler) updateMemory(_ context.Context, sessionID int64, userMsg s
 		userMsg = userMsg[:150] + "..."
 	}
 	h.memoryStore.AddFact(sessionID, "用户问: "+userMsg)
+}
+
+// buildSkillPrompt 从已注册的 skill 构建要注入的 system prompt 片段。
+func buildSkillPrompt(reg *skill.Registry) string {
+	skills := reg.AllSkills()
+	if len(skills) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("[可用技能 - 根据用户需求选择合适的工具]\n\n")
+	for _, sk := range skills {
+		sb.WriteString(fmt.Sprintf("## %s (%s)\n", sk.DisplayName, sk.Name))
+		sb.WriteString(sk.Description + "\n")
+		if sk.Prompt != "" {
+			sb.WriteString(sk.Prompt + "\n")
+		}
+		toolNames := make([]string, len(sk.Tools))
+		for i, t := range sk.Tools {
+			toolNames[i] = t.Name
+		}
+		sb.WriteString(fmt.Sprintf("可用工具: %s\n\n", strings.Join(toolNames, ", ")))
+	}
+	return sb.String()
 }

@@ -66,11 +66,16 @@ func main() {
 		secret = "change-me-to-a-random-secret"
 	}
 
+	skillsDir := os.Getenv("SKILLS_DIR")
+	if skillsDir == "" {
+		skillsDir = "skills"
+	}
 	adminHandler := admin.New(admin.Config{
 		DB:            store,
 		Registry:      registry,
 		AgentFactory:  agentFactory,
 		SessionSecret: secret,
+		SkillsDir:     skillsDir,
 	})
 
 	adminSrv := &http.Server{
