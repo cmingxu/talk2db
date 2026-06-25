@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"talk2db/internal/logger"
@@ -75,6 +76,12 @@ func (r *Runner) Run(ctx context.Context, tool *Tool, args map[string]any) (map[
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, runtime, scriptPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Kill the whole process group on timeout so grandchild processes
+	// (e.g. sleep inside a shell script) don't keep pipe FDs open.
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
 	cmd.Dir = tool.SkillDir
 	cmd.Stdin = bytes.NewReader(inputJSON)
 
