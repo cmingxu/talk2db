@@ -2,7 +2,6 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Send, Loader2, Database } from 'lucide-react';
 import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
 import { useToast } from '../hooks/use-toast';
 import { useAuth } from '../hooks/useAuth';
 import { useSSE } from '../hooks/useSSE';
@@ -137,7 +136,7 @@ export default function ChatPage() {
   }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSend(); }
   };
 
   const hasStreaming = isStreaming || streamSteps.length > 0 || streamContent;
@@ -248,14 +247,15 @@ export default function ChatPage() {
           )}
         </div>
 
-        <div className="flex gap-2">
-          <Input
+        <div className="flex gap-2 items-end">
+          <textarea
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入你的问题..."
+            placeholder="输入你的问题... (Enter 换行，Cmd/Ctrl+Enter 发送)"
             disabled={isStreaming}
-            className="flex-1"
+            rows={1}
+            className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm resize-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           />
           <Button onClick={handleSend} disabled={isStreaming || !input.trim()}>
             {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
