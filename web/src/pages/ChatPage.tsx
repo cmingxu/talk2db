@@ -198,7 +198,17 @@ export default function ChatPage() {
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-4 bg-white rounded-lg border p-4 mb-4 shadow-sm">
           {/* History messages */}
-          {history.map(msg => (
+          {(() => {
+            // 避免 lastSteps 和 history 里的 toolResults 重复渲染：
+            // 当 lastSteps 有内容时，说明最近一轮的结果已通过 lastSteps 展示，
+            // 跳过 history 最后一条 assistant 消息的 toolResults
+            const lastAsstIdx = (() => {
+              for (let i = history.length - 1; i >= 0; i--) {
+                if (history[i].role === 'assistant') return i;
+              }
+              return -1;
+            })();
+            return history.map((msg, idx) => (
             <div key={msg.id}>
               {msg.role === 'user' ? (
                 <div className="flex justify-end">
@@ -219,8 +229,8 @@ export default function ChatPage() {
                       onExecuteSql={isAdmin ? handleOpenPlayground : undefined}
                     />
                   )}
-                  {/* Render persisted tool results (charts, etc.) from history */}
-                  {msg.toolResults && renderHistoryToolResults(msg.toolResults)}
+                  {/* Persisted tool results — skip if lastSteps already shows this turn */}
+                  {msg.toolResults && !(idx === lastAsstIdx && lastSteps.length > 0) && renderHistoryToolResults(msg.toolResults)}
                   <MessageBlock content={msg.content} />
                   <div className="text-xs text-muted-foreground">
                     {new Date(msg.createdAt).toLocaleTimeString()}
@@ -228,7 +238,7 @@ export default function ChatPage() {
                 </div>
               )}
             </div>
-          ))}
+          ));})()}
 
           {/* Streaming display */}
           {hasStreaming && (
