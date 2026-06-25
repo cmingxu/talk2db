@@ -227,7 +227,7 @@ export default function ChatPage() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {msg.sql && (
+                  {msg.sql && !(idx === lastAsstIdx && lastSteps.length > 0) && (
                     <ToolCallBlock
                       tool="execute_sql"
                       arguments={JSON.stringify({ query: msg.sql.split(';\n')[0] })}
