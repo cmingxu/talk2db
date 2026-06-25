@@ -82,6 +82,7 @@ export default function ChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [searchParams] = useSearchParams();
   const autoSentRef = useRef(false);
+  const sseProcessedRef = useRef(0);
 
   useEffect(() => {
     if (!id) return;
@@ -104,6 +105,7 @@ export default function ChatPage() {
       setStreamSteps([]);
       setLastSteps([]);
       setStreamContent('');
+      sseProcessedRef.current = 0;
       setHistory(prev => [...prev, { id: 0, sessionId: Number(id), role: 'user', content: q, createdAt: new Date().toISOString() }]);
       startSSE(`/api/sessions/${id}/chat`, { message: q });
     }, 500);
@@ -111,7 +113,9 @@ export default function ChatPage() {
   }, [searchParams, id, isStreaming, startSSE]);
 
   const processSSE = useCallback(() => {
-    for (const m of sseMessages) {
+    const newMsgs = sseMessages.slice(sseProcessedRef.current);
+    sseProcessedRef.current = sseMessages.length;
+    for (const m of newMsgs) {
       switch (m.event) {
 
 
@@ -162,7 +166,9 @@ export default function ChatPage() {
   const handleSend = () => {
     if (!input.trim() || isStreaming || !id) return;
     setStreamSteps([]);
+    setLastSteps([]);
     setStreamContent('');
+    sseProcessedRef.current = 0;
     setHistory(prev => [...prev, { id: 0, sessionId: Number(id), role: 'user', content: input, createdAt: new Date().toISOString() }]);
     startSSE(`/api/sessions/${id}/chat`, { message: input });
     setInput('');
