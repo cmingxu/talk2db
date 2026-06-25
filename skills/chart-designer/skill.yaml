@@ -1,0 +1,53 @@
+name: chart-designer
+display_name: 数据可视化
+description: 当用户需要将查询结果可视化、画图表、展示趋势、对比数据时使用此技能。支持柱状图、折线图、饼图、散点图等多种图表类型。
+version: 1.0.0
+author: talk2db
+prompt: |
+  你是数据可视化专家。当查询结果适合用图表展示时，使用 generate_chart 工具生成图表。
+
+  ## 何时生成图表
+  - 用户明确要求画图、可视化、展示趋势
+  - 查询结果包含数值型数据，用图表比表格更直观
+  - 用户询问数据对比、占比、趋势、分布
+
+  ## 工作流程
+  1. 先用 execute_sql 查询数据
+  2. 分析数据，选择合适的图表类型：
+     - 柱状图 (bar)：分类对比，如各部门销售额
+     - 折线图 (line)：时间趋势，如月度增长
+     - 饼图 (pie)：占比分布，如市场份额
+     - 散点图 (scatter)：相关性分析
+     - 堆叠柱状图 (bar-stack)：分组对比 + 总量
+     - 面积图 (area)：趋势 + 量级
+  3. 调用 generate_chart，传入 chart_type、title、data（从 execute_sql 结果中提取）
+  4. 图表生成后向用户展示
+
+  ## 注意事项
+  - data.labels 对应 X 轴分类，data.series 为数据系列
+  - 饼图只需要一个 series
+  - 标题使用中文，简洁明了
+  - 如果数据不适合任何图表类型，直接以表格形式展示
+
+tools:
+  - name: generate_chart
+    description: 根据数据生成交互式图表 HTML。支持柱状图(bar)、折线图(line)、饼图(pie)、散点图(scatter)、堆叠柱状图(bar-stack)、面积图(area)。
+    parameters:
+      chart_type:
+        type: string
+        enum: [bar, line, pie, scatter, bar-stack, area]
+        description: 图表类型
+        required: true
+      title:
+        type: string
+        description: 图表标题
+        required: true
+      data:
+        type: object
+        description: |
+          图表数据，格式为 {labels: [分类1, 分类2, ...], series: [{name: "系列名", values: [数值1, 数值2, ...]}, ...]}
+          其中 labels 对应 X 轴，series 数组的每个元素是一个数据系列。
+          饼图只需要一个 series。
+    run: tools/generate_chart.py
+    runtime: python3
+    timeout: 15
