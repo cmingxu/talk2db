@@ -309,21 +309,21 @@ func (h *chatHandler) chat(c *gin.Context) {
 						"error": toolErr.Error(),
 					})
 				} else {
-					// Parse result to extract SQL
-					var parsed struct {
+					// Try SQL result format first (must have columns field to qualify)
+					var sqlResult struct {
 						Columns []string   `json:"columns"`
 						Rows    [][]string `json:"rows"`
 						Count   int        `json:"count"`
 						Error   string     `json:"error,omitempty"`
 					}
-					if json.Unmarshal([]byte(resultJSON), &parsed) == nil {
+					if json.Unmarshal([]byte(resultJSON), &sqlResult) == nil && sqlResult.Columns != nil {
 						sendSSEEvent(c.Writer, flusher, "tool_result", map[string]any{
 							"tool":    toolName,
 							"type":    "table",
-							"columns": parsed.Columns,
-							"rows":    parsed.Rows,
-							"count":   parsed.Count,
-							"error":   parsed.Error,
+							"columns": sqlResult.Columns,
+							"rows":    sqlResult.Rows,
+							"count":   sqlResult.Count,
+							"error":   sqlResult.Error,
 						})
 					} else {
 						// Skill tool result: unwrap {success, result: {type, config, ...}}
