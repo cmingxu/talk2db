@@ -1,0 +1,18 @@
+name: _example_echo
+display_name: 示例回显
+description: 一个用于测试 skill 框架的示例 skill。将输入参数回显。
+version: 1.0.0
+author: talk2db
+prompt: |
+  当用户想要测试或调试时，可以使用 example_echo 工具。
+
+tools:
+  - name: example_echo
+    description: 回显输入参数，用于测试 skill 框架
+    parameters:
+      message:
+        type: string
+        description: 要回显的消息
+    run: tools/echo.py
+    runtime: python3
+    timeout: 10
