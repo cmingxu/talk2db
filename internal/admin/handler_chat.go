@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -368,7 +369,9 @@ func (h *chatHandler) chat(c *gin.Context) {
 			}
 		} else {
 			// Final response — no tool calls
-			sendSSEEvent(c.Writer, flusher, "text", map[string]string{"content": resp.Content})
+			// Strip think/reasoning tags before sending to frontend
+			cleanContent := stripThinkTags(resp.Content)
+			sendSSEEvent(c.Writer, flusher, "text", map[string]string{"content": cleanContent})
 
 			// Save assistant message
 			assistantSQL := ""
@@ -420,6 +423,19 @@ func (h *chatHandler) chat(c *gin.Context) {
 		"session_id": sessionID,
 	})
 	sendSSEEvent(c.Writer, flusher, "error", map[string]string{"error": "exceeds max steps"})
+}
+
+// stripThinkTags removes <｜end▁of▁thinking｜> and  ️ tags and their content from the
+// LLM response. Some models (e.g. DeepSeek) include chain-of-thought reasoning
+// that should not be shown to the end user.
+func stripThinkTags(content string) string {
+	// Strip <think>...</think> tags (DeepSeek-style reasoning)
+	re := regexp.MustCompile(`(?s)<\s*think\s*>.*?<\s*/\s*think\s*>`)
+	result := re.ReplaceAllString(content, "")
+	// Strip <reasoning>...</reasoning> tags as well
+	re2 := regexp.MustCompile(`(?s)<\s*reasoning\s*>.*?<\s*/\s*reasoning\s*>`)
+	result = re2.ReplaceAllString(result, "")
+	return strings.TrimSpace(result)
 }
 
 func sendSSEEvent(w http.ResponseWriter, flusher http.Flusher, event string, data any) {

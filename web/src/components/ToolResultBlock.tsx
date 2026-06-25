@@ -1,4 +1,5 @@
-import { Table, AlertCircle } from 'lucide-react';
+import { useState } from 'react';
+import { Table, AlertCircle, ChevronDown } from 'lucide-react';
 
 interface Props {
   columns?: string[];
@@ -8,6 +9,8 @@ interface Props {
 }
 
 export default function ToolResultBlock({ columns, rows, count, error }: Props) {
+  const [collapsed, setCollapsed] = useState(true);
+
   if (error) {
     return (
       <div className="border border-red-200 bg-red-50/30 rounded-lg p-3">
@@ -33,7 +36,11 @@ export default function ToolResultBlock({ columns, rows, count, error }: Props) 
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b">
+      <button
+        className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b w-full text-left hover:bg-gray-100 transition-colors"
+        onClick={() => setCollapsed(!collapsed)}
+      >
+        <ChevronDown className={`h-3 w-3 text-muted-foreground transition-transform ${collapsed ? '' : 'rotate-180'}`} />
         <Table className="h-3.5 w-3.5 text-muted-foreground" />
         <span className="text-xs font-medium text-muted-foreground">Results</span>
         {count !== undefined && (
@@ -41,36 +48,38 @@ export default function ToolResultBlock({ columns, rows, count, error }: Props) 
             {count} row{count !== 1 ? 's' : ''}
           </span>
         )}
-      </div>
-      <div className="max-h-64 overflow-auto">
-        <table className="w-full text-xs">
-          <thead className="bg-muted/50 sticky top-0">
-            <tr>
-              {columns.map((col, i) => (
-                <th key={i} className="text-left px-3 py-2 font-medium text-muted-foreground border-b whitespace-nowrap">
-                  {col}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows?.map((row, ri) => (
-              <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-muted/20'}>
-                {row.map((cell, ci) => (
-                  <td
-                    key={ci}
-                    className={`px-3 py-1.5 border-b border-gray-100 whitespace-nowrap max-w-64 overflow-hidden text-ellipsis ${
-                      cell === 'NULL' ? 'text-muted-foreground italic' : ''
-                    }`}
-                  >
-                    {cell}
-                  </td>
+      </button>
+      {!collapsed && (
+        <div className="max-h-64 overflow-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50 sticky top-0">
+              <tr>
+                {columns.map((col, i) => (
+                  <th key={i} className="text-left px-3 py-2 font-medium text-muted-foreground border-b whitespace-nowrap">
+                    {col}
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows?.map((row, ri) => (
+                <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-muted/20'}>
+                  {row.map((cell, ci) => (
+                    <td
+                      key={ci}
+                      className={`px-3 py-1.5 border-b border-gray-100 whitespace-nowrap max-w-64 overflow-hidden text-ellipsis ${
+                        cell === 'NULL' ? 'text-muted-foreground italic' : ''
+                      }`}
+                    >
+                      {cell}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

@@ -75,7 +75,6 @@ export default function ChatPage() {
   const [sessionName, setSessionName] = useState('');
   const [input, setInput] = useState('');
   const [streamSteps, setStreamSteps] = useState<ToolStep[]>([]);
-  const [lastSteps, setLastSteps] = useState<ToolStep[]>([]);
   const [streamContent, setStreamContent] = useState('');
   const [playgroundOpen, setPlaygroundOpen] = useState(false);
   const [playgroundSql, setPlaygroundSql] = useState('');
@@ -83,6 +82,7 @@ export default function ChatPage() {
   const [searchParams] = useSearchParams();
   const autoSentRef = useRef(false);
   const sseProcessedRef = useRef(0);
+  const streamContentRef = useRef('');
 
   useEffect(() => {
     if (!id) return;
@@ -103,8 +103,8 @@ export default function ChatPage() {
     // Short delay so session/datasource data has time to load
     const timer = setTimeout(() => {
       setStreamSteps([]);
-      setLastSteps([]);
       setStreamContent('');
+      streamContentRef.current = '';
       sseProcessedRef.current = 0;
       setHistory(prev => [...prev, { id: 0, sessionId: Number(id), role: 'user', content: q, createdAt: new Date().toISOString() }]);
       startSSE(`/api/sessions/${id}/chat`, { message: q });
@@ -145,29 +145,68 @@ export default function ChatPage() {
           break;
         case 'text':
           setStreamContent(m.data.content || '');
+          streamContentRef.current = m.data.content || '';
           break;
-        case 'done':
-          setStreamSteps(prev => { setLastSteps(prev); return []; });
+        case 'done': {
+          // Build the assistant message locally from streaming data to avoid
+          // the async refetch gap that causes order instability.
+          const finalContent = streamContentRef.current;
+          setStreamSteps(prev => {
+            const sqls: string[] = [];
+            const toolResults: ToolResultEntry[] = [];
+            for (const step of prev) {
+              if (step.toolCall.tool === 'execute_sql') {
+                try {
+                  const args = JSON.parse(step.toolCall.arguments);
+                  if (args.query) sqls.push(args.query);
+                } catch { /* ignore parse errors */ }
+              }
+              if (step.toolResult) {
+                toolResults.push({
+                  tool: step.toolCall.tool,
+                  type: step.toolResult.type,
+                  config: step.toolResult.config,
+                  columns: step.toolResult.columns,
+                  rows: step.toolResult.rows,
+                  count: step.toolResult.count,
+                  error: step.toolResult.error,
+                });
+              }
+            }
+            const assistantMsg: Msg = {
+              id: Date.now(),
+              sessionId: Number(id),
+              role: 'assistant',
+              content: finalContent,
+              sql: sqls.length > 0 ? sqls.join(';\n') : undefined,
+              toolResults: toolResults.length > 0 ? JSON.stringify(toolResults) : undefined,
+              createdAt: new Date().toISOString(),
+            };
+            setHistory(prev => [...prev, assistantMsg]);
+            return [];
+          });
           setStreamContent('');
-          if (id) getMessages(Number(id)).then(setHistory).catch(() => {});
+          streamContentRef.current = '';
           break;
+        }
       }
     }
   }, [sseMessages, id]);
 
   useEffect(() => { processSSE(); }, [processSSE]);
 
+  // Auto-scroll only for new messages and text content, not tool blocks
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [history, streamSteps, streamContent]);
+  }, [history, streamContent]);
 
   const handleSend = () => {
     if (!input.trim() || isStreaming || !id) return;
     setStreamSteps([]);
-    setLastSteps([]);
     setStreamContent('');
+    streamContentRef.current = '';
     sseProcessedRef.current = 0;
     setHistory(prev => [...prev, { id: 0, sessionId: Number(id), role: 'user', content: input, createdAt: new Date().toISOString() }]);
     startSSE(`/api/sessions/${id}/chat`, { message: input });
@@ -204,17 +243,7 @@ export default function ChatPage() {
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-4 bg-white rounded-lg border p-4 mb-4 shadow-sm">
           {/* History messages */}
-          {(() => {
-            // 避免 lastSteps 和 history 里的 toolResults 重复渲染：
-            // 当 lastSteps 有内容时，说明最近一轮的结果已通过 lastSteps 展示，
-            // 跳过 history 最后一条 assistant 消息的 toolResults
-            const lastAsstIdx = (() => {
-              for (let i = history.length - 1; i >= 0; i--) {
-                if (history[i].role === 'assistant') return i;
-              }
-              return -1;
-            })();
-            return history.map((msg, idx) => (
+          {history.map((msg) => (
             <div key={msg.id}>
               {msg.role === 'user' ? (
                 <div className="flex justify-end">
@@ -227,7 +256,7 @@ export default function ChatPage() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {msg.sql && !(idx === lastAsstIdx && lastSteps.length > 0) && (
+                  {msg.sql && (
                     <ToolCallBlock
                       tool="execute_sql"
                       arguments={JSON.stringify({ query: msg.sql.split(';\n')[0] })}
@@ -235,8 +264,7 @@ export default function ChatPage() {
                       onExecuteSql={isAdmin ? handleOpenPlayground : undefined}
                     />
                   )}
-                  {/* Persisted tool results — skip if lastSteps already shows this turn */}
-                  {msg.toolResults && !(idx === lastAsstIdx && lastSteps.length > 0) && renderHistoryToolResults(msg.toolResults)}
+                  {msg.toolResults && renderHistoryToolResults(msg.toolResults)}
                   <MessageBlock content={msg.content} />
                   <div className="text-xs text-muted-foreground">
                     {new Date(msg.createdAt).toLocaleTimeString()}
@@ -244,7 +272,7 @@ export default function ChatPage() {
                 </div>
               )}
             </div>
-          ));})()}
+          ))}
 
           {/* Streaming display */}
           {hasStreaming && (
@@ -289,37 +317,9 @@ export default function ChatPage() {
                 !streamSteps.length && (
                   <div className="flex items-center gap-2 text-muted-foreground text-sm">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>思考中...</span>
                   </div>
                 )
               )}
-            </div>
-          )}
-
-          {/* 上一轮完成的 tool results（图表等），流式结束后持久显示 */}
-          {!isStreaming && lastSteps.length > 0 && (
-            <div className="space-y-2">
-              {lastSteps.map((step, i) => (
-                <div key={i} className="space-y-2">
-                  <ToolCallBlock
-                    tool={step.toolCall.tool}
-                    arguments={step.toolCall.arguments}
-                    status="done"
-                  />
-                  {step.toolResult && (
-                    step.toolResult.type === 'echart' && step.toolResult.config ? (
-                      <EChartsBlock config={step.toolResult.config} />
-                    ) : (
-                      <ToolResultBlock
-                        columns={step.toolResult.columns}
-                        rows={step.toolResult.rows}
-                        count={step.toolResult.count}
-                        error={step.toolResult.error}
-                      />
-                    )
-                  )}
-                </div>
-              ))}
             </div>
           )}
 
