@@ -11,13 +11,21 @@ import { getDatasource, type Datasource } from '../api/datasources';
 
 import ToolCallBlock from '../components/ToolCallBlock';
 import MessageBlock from '../components/MessageBlock';
+import ToolResultBlock from '../components/ToolResultBlock';
+import EChartsBlock from '../components/EChartsBlock';
 import SqlPlayground from '../components/SqlPlayground';
-
 
 interface ToolStep {
   toolCall: { tool: string; arguments: string };
   status: 'executing' | 'done' | 'error';
-  toolResult?: { columns?: string[]; rows?: string[][]; count?: number; error?: string };
+  toolResult?: {
+    columns?: string[];
+    rows?: string[][];
+    count?: number;
+    error?: string;
+    type?: string;
+    config?: Record<string, unknown>;
+  };
 }
 
 export default function ChatPage() {
@@ -87,6 +95,8 @@ export default function ChatPage() {
                 rows: m.data.rows,
                 count: m.data.count,
                 error: m.data.error,
+                type: m.data.type,
+                config: m.data.config,
               };
             }
             return updated;
@@ -184,13 +194,49 @@ export default function ChatPage() {
           {/* Streaming display */}
           {hasStreaming && (
             <div className="space-y-3">
+              {/* Tool calls and results during streaming */}
+              {streamSteps.map((step, i) => (
+                <div key={i} className="space-y-2">
+                  <ToolCallBlock
+                    tool={step.toolCall.tool}
+                    arguments={step.toolCall.arguments}
+                    status={step.status}
+                    onExecuteSql={
+                      isAdmin && step.toolCall.tool === 'execute_sql'
+                        ? () => {
+                            try {
+                              const parsed = JSON.parse(step.toolCall.arguments);
+                              if (parsed.query) handleOpenPlayground(parsed.query);
+                            } catch {
+                              handleOpenPlayground(step.toolCall.arguments);
+                            }
+                          }
+                        : undefined
+                    }
+                  />
+                  {step.toolResult && (
+                    step.toolResult.type === 'echart' && step.toolResult.config ? (
+                      <EChartsBlock config={step.toolResult.config} />
+                    ) : (
+                      <ToolResultBlock
+                        columns={step.toolResult.columns}
+                        rows={step.toolResult.rows}
+                        count={step.toolResult.count}
+                        error={step.toolResult.error}
+                      />
+                    )
+                  )}
+                </div>
+              ))}
               {streamContent ? (
                 <MessageBlock content={streamContent} />
               ) : (
-                <div className="flex items-center gap-2 text-muted-foreground text-sm">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>思考中...</span>
-                </div>
+                !streamSteps.length && (
+                  <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>思考中...</span>
+                  </div>
+                )
               )}
             </div>
           )}

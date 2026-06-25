@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-generate_chart.py — Generate interactive ECharts HTML from structured data.
+generate_chart.py — Generate ECharts option config from structured data.
 
 Input (stdin JSON):
 {
@@ -19,12 +19,11 @@ Input (stdin JSON):
 }
 
 Output (stdout JSON):
-{"success": true, "result": {"type": "html", "html": "<div>...</div>"}}
+{"success": true, "result": {"type": "echart", "config": {<ECharts option>}}}
 """
 
 import json
 import sys
-from textwrap import dedent
 
 
 # ── ECharts series type mapping ──────────────────────────────────────
@@ -38,7 +37,6 @@ SERIES_TYPE = {
     "area":       "line",
 }
 
-# Extra options applied per chart type
 EXTRA_OPTIONS = {
     "bar-stack": lambda _: {"stack": "total"},
     "area":      lambda _: {"areaStyle": {}},
@@ -89,7 +87,7 @@ def validate_input(args: dict) -> tuple[str, str, list, list]:
 
 
 def build_echarts_option(chart_type: str, title: str, labels: list, series_list: list) -> dict:
-    """Build the ECharts option object."""
+    """Build the ECharts option object for frontend rendering."""
     echarts_type = SERIES_TYPE[chart_type]
     extra_fn = EXTRA_OPTIONS.get(chart_type)
 
@@ -143,11 +141,9 @@ def build_echarts_option(chart_type: str, title: str, labels: list, series_list:
         option["series"][0]["center"] = ["50%", "50%"]
         option["series"][0]["label"] = {"formatter": "{b}: {c} ({d}%)"}
 
-    # Scatter: no category axis
+    # Scatter: value axis, convert to [x, y] pairs
     if chart_type == "scatter":
         option["xAxis"] = {"type": "value"}
-        # Convert scatter values to [x, y] pairs
-        # When labels is numeric, pair with series values
         for item in series:
             xs = [float(x) for x in labels]
             ys = [float(y) for y in item["data"]]
@@ -156,40 +152,11 @@ def build_echarts_option(chart_type: str, title: str, labels: list, series_list:
     return option
 
 
-def build_html(option: dict) -> str:
-    """Generate a self-contained HTML page with ECharts."""
-    option_json = json.dumps(option, ensure_ascii=False, indent=2)
-
-    return dedent(f"""\
-    <!DOCTYPE html>
-    <html lang="zh-CN">
-    <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-    <style>
-      * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-      body {{ background: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
-      #chart {{ width: 100%; height: 100vh; }}
-    </style>
-    </head>
-    <body>
-    <div id="chart"></div>
-    <script>
-      var chart = echarts.init(document.getElementById('chart'));
-      chart.setOption({option_json});
-      window.addEventListener('resize', function() {{ chart.resize(); }});
-    </script>
-    </body>
-    </html>""")
-
-
 def main():
     try:
         raw = sys.stdin.read()
         if not raw.strip():
-            output = {"success": False, "error": "无输入数据"}
-            json.dump(output, sys.stdout, ensure_ascii=False)
+            json.dump({"success": False, "error": "无输入数据"}, sys.stdout, ensure_ascii=False)
             return
 
         input_data = json.loads(raw)
@@ -197,20 +164,14 @@ def main():
         if not isinstance(args, dict):
             args = {}
 
-        # Validate
         chart_type, title, labels, series_list = validate_input(args)
-
-        # Build
-        option = build_echarts_option(chart_type, title, labels, series_list)
-        html = build_html(option)
+        config = build_echarts_option(chart_type, title, labels, series_list)
 
         output = {
             "success": True,
             "result": {
-                "type": "html",
-                "html": html,
-                "chart_type": chart_type,
-                "title": title,
+                "type": "echart",
+                "config": config,
             },
         }
         json.dump(output, sys.stdout, ensure_ascii=False)

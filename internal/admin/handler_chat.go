@@ -319,16 +319,34 @@ func (h *chatHandler) chat(c *gin.Context) {
 					if json.Unmarshal([]byte(resultJSON), &parsed) == nil {
 						sendSSEEvent(c.Writer, flusher, "tool_result", map[string]any{
 							"tool":    toolName,
+							"type":    "table",
 							"columns": parsed.Columns,
 							"rows":    parsed.Rows,
 							"count":   parsed.Count,
 							"error":   parsed.Error,
 						})
 					} else {
-						sendSSEEvent(c.Writer, flusher, "tool_result", map[string]any{
-							"tool":   toolName,
-							"result": resultJSON,
-						})
+						// Skill tool result: unwrap {success, result: {type, config, ...}}
+						var skillResult struct {
+							Success bool           `json:"success"`
+							Result  map[string]any `json:"result"`
+							Error   string         `json:"error"`
+						}
+						if json.Unmarshal([]byte(resultJSON), &skillResult) == nil && skillResult.Success && skillResult.Result != nil {
+							resultData := map[string]any{"tool": toolName}
+							for k, v := range skillResult.Result {
+								resultData[k] = v
+							}
+							if skillResult.Error != "" {
+								resultData["error"] = skillResult.Error
+							}
+							sendSSEEvent(c.Writer, flusher, "tool_result", resultData)
+						} else {
+							sendSSEEvent(c.Writer, flusher, "tool_result", map[string]any{
+								"tool":   toolName,
+								"result": resultJSON,
+							})
+						}
 					}
 				}
 
