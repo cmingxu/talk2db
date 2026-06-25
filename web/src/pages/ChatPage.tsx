@@ -39,6 +39,7 @@ export default function ChatPage() {
   const [sessionName, setSessionName] = useState('');
   const [input, setInput] = useState('');
   const [streamSteps, setStreamSteps] = useState<ToolStep[]>([]);
+  const [lastSteps, setLastSteps] = useState<ToolStep[]>([]);
   const [streamContent, setStreamContent] = useState('');
   const [playgroundOpen, setPlaygroundOpen] = useState(false);
   const [playgroundSql, setPlaygroundSql] = useState('');
@@ -65,6 +66,7 @@ export default function ChatPage() {
     // Short delay so session/datasource data has time to load
     const timer = setTimeout(() => {
       setStreamSteps([]);
+      setLastSteps([]);
       setStreamContent('');
       setHistory(prev => [...prev, { id: 0, sessionId: Number(id), role: 'user', content: q, createdAt: new Date().toISOString() }]);
       startSSE(`/api/sessions/${id}/chat`, { message: q });
@@ -105,7 +107,7 @@ export default function ChatPage() {
           setStreamContent(m.data.content || '');
           break;
         case 'done':
-          setStreamSteps([]);
+          setStreamSteps(prev => { setLastSteps(prev); return []; });
           setStreamContent('');
           if (id) getMessages(Number(id)).then(setHistory).catch(() => {});
           break;
@@ -237,6 +239,33 @@ export default function ChatPage() {
                   </div>
                 )
               )}
+            </div>
+          )}
+
+          {/* 上一轮完成的 tool results（图表等），流式结束后持久显示 */}
+          {!isStreaming && lastSteps.length > 0 && (
+            <div className="space-y-2">
+              {lastSteps.map((step, i) => (
+                <div key={i} className="space-y-2">
+                  <ToolCallBlock
+                    tool={step.toolCall.tool}
+                    arguments={step.toolCall.arguments}
+                    status="done"
+                  />
+                  {step.toolResult && (
+                    step.toolResult.type === 'echart' && step.toolResult.config ? (
+                      <EChartsBlock config={step.toolResult.config} />
+                    ) : (
+                      <ToolResultBlock
+                        columns={step.toolResult.columns}
+                        rows={step.toolResult.rows}
+                        count={step.toolResult.count}
+                        error={step.toolResult.error}
+                      />
+                    )
+                  )}
+                </div>
+              ))}
             </div>
           )}
 
