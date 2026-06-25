@@ -259,6 +259,7 @@ func (h *chatHandler) chat(c *gin.Context) {
 
 	const maxSteps = 30
 	var allSQL []string
+	var allToolResults []map[string]any
 
 	// Custom ReAct loop
 	for step := 0; step < maxSteps; step++ {
@@ -317,14 +318,16 @@ func (h *chatHandler) chat(c *gin.Context) {
 						Error   string     `json:"error,omitempty"`
 					}
 					if json.Unmarshal([]byte(resultJSON), &sqlResult) == nil && sqlResult.Columns != nil {
-						sendSSEEvent(c.Writer, flusher, "tool_result", map[string]any{
+						trData := map[string]any{
 							"tool":    toolName,
 							"type":    "table",
 							"columns": sqlResult.Columns,
 							"rows":    sqlResult.Rows,
 							"count":   sqlResult.Count,
 							"error":   sqlResult.Error,
-						})
+						}
+						sendSSEEvent(c.Writer, flusher, "tool_result", trData)
+						allToolResults = append(allToolResults, trData)
 					} else {
 						// Skill tool result: unwrap {success, result: {type, config, ...}}
 						var skillResult struct {
@@ -341,11 +344,11 @@ func (h *chatHandler) chat(c *gin.Context) {
 								resultData["error"] = skillResult.Error
 							}
 							sendSSEEvent(c.Writer, flusher, "tool_result", resultData)
+							allToolResults = append(allToolResults, resultData)
 						} else {
-							sendSSEEvent(c.Writer, flusher, "tool_result", map[string]any{
-								"tool":   toolName,
-								"result": resultJSON,
-							})
+							trData := map[string]any{"tool": toolName, "result": resultJSON}
+							sendSSEEvent(c.Writer, flusher, "tool_result", trData)
+							allToolResults = append(allToolResults, trData)
 						}
 					}
 				}
@@ -372,11 +375,18 @@ func (h *chatHandler) chat(c *gin.Context) {
 			if len(allSQL) > 0 {
 				assistantSQL = strings.Join(allSQL, ";\n")
 			}
+			toolResultsJSON := ""
+			if len(allToolResults) > 0 {
+				if b, err := json.Marshal(allToolResults); err == nil {
+					toolResultsJSON = string(b)
+				}
+			}
 			_, err = h.store.AddMessage(ctx, models.Message{
-				SessionID: sessionID,
-				Role:      "assistant",
-				Content:   resp.Content,
-				SQL:       assistantSQL,
+				SessionID:   sessionID,
+				Role:        "assistant",
+				Content:     resp.Content,
+				SQL:         assistantSQL,
+				ToolResults: toolResultsJSON,
 			})
 			if err != nil {
 				logger.Error("chat_response", "failed to save assistant message", map[string]any{

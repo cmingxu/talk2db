@@ -15,6 +15,7 @@ export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
   sql?: string;
+  toolResults?: string;
   createdAt: string;
 }
 

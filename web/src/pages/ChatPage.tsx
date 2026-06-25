@@ -27,6 +27,42 @@ interface ToolStep {
   };
 }
 
+interface ToolResultEntry {
+  tool?: string;
+  type?: string;
+  config?: Record<string, unknown>;
+  columns?: string[];
+  rows?: string[][];
+  count?: number;
+  error?: string;
+}
+
+function renderHistoryToolResults(json: string) {
+  try {
+    const results: ToolResultEntry[] = JSON.parse(json);
+    if (!Array.isArray(results)) return null;
+    return results.map((tr, i) => (
+      <div key={i} className="space-y-2">
+        {tr.tool && tr.tool !== 'execute_sql' && (
+          <ToolCallBlock tool={tr.tool} arguments="" status="done" />
+        )}
+        {tr.type === 'echart' && tr.config ? (
+          <EChartsBlock config={tr.config} />
+        ) : tr.type === 'table' && tr.columns ? (
+          <ToolResultBlock
+            columns={tr.columns}
+            rows={tr.rows}
+            count={tr.count}
+            error={tr.error}
+          />
+        ) : null}
+      </div>
+    ));
+  } catch {
+    return null;
+  }
+}
+
 export default function ChatPage() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
@@ -183,6 +219,8 @@ export default function ChatPage() {
                       onExecuteSql={isAdmin ? handleOpenPlayground : undefined}
                     />
                   )}
+                  {/* Render persisted tool results (charts, etc.) from history */}
+                  {msg.toolResults && renderHistoryToolResults(msg.toolResults)}
                   <MessageBlock content={msg.content} />
                   <div className="text-xs text-muted-foreground">
                     {new Date(msg.createdAt).toLocaleTimeString()}
