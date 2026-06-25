@@ -84,8 +84,9 @@ func (t *skillTool) InvokableRun(ctx context.Context, argumentsInJSON string, op
 		return string(errJSON), nil
 	}
 
-	out, _ := json.Marshal(result)
-	return string(out), nil
+		// Wrap in {success, result} envelope to match handler skillResult parsing
+		out, _ := json.Marshal(map[string]any{"success": true, "result": result})
+		return string(out), nil
 }
 
 // MustMarshalJSON 将 v 序列化为 JSON 字符串，用于 tool result 的 content。
