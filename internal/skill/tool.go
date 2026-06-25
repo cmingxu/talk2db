@@ -15,34 +15,22 @@ import (
 // 手动实现 BaseTool + InvokableTool 接口，使 LLM 感知到 YAML 中定义的
 // 扁平参数名（如 chart_type, title），而非嵌套在 "args" 下。
 type skillTool struct {
-	skillTool *Tool   // skill 定义（指针指向 Registry 中的 Tool，零拷贝）
+	skillTool *Tool            // skill 定义（指针指向 Registry 中的 Tool，零拷贝）
 	runner    *Runner
-	info      *schema.ToolInfo // 缓存的 ToolInfo
+	info      *schema.ToolInfo // 在构造时预构建，避免 Info() 中的竞态
 }
 
 // NewEinoTool 将一个 skill Tool 包装为 Eino InvokableTool。
+// ToolInfo 在构造时预先构建（无竞态），Info() 直接返回缓存值。
 func NewEinoTool(runner *Runner, st *Tool) tool.InvokableTool {
-	return &skillTool{
-		skillTool: st,
-		runner:    runner,
-	}
-}
-
-// Info 返回 tool 的元数据，包括从 YAML parameters 构建的 JSON schema。
-func (t *skillTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
-	if t.info != nil {
-		return t.info, nil
-	}
-
 	info := &schema.ToolInfo{
-		Name: t.skillTool.Name,
-		Desc: t.skillTool.Description,
+		Name: st.Name,
+		Desc: st.Description,
 	}
 
-	// 从 YAML parameters 构建 ParameterInfo map
-	if len(t.skillTool.Parameters) > 0 {
-		params := make(map[string]*schema.ParameterInfo, len(t.skillTool.Parameters))
-		for name, def := range t.skillTool.Parameters {
+	if len(st.Parameters) > 0 {
+		params := make(map[string]*schema.ParameterInfo, len(st.Parameters))
+		for name, def := range st.Parameters {
 			pi := &schema.ParameterInfo{
 				Type:     schema.DataType(def.Type),
 				Desc:     def.Description,
@@ -56,8 +44,16 @@ func (t *skillTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 		info.ParamsOneOf = schema.NewParamsOneOfByParams(params)
 	}
 
-	t.info = info
-	return info, nil
+	return &skillTool{
+		skillTool: st,
+		runner:    runner,
+		info:      info,
+	}
+}
+
+// Info 返回 tool 的预构建元数据（线程安全，纯读操作）。
+func (t *skillTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
+	return t.info, nil
 }
 
 // InvokableRun 执行 skill 脚本。

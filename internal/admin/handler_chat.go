@@ -191,11 +191,20 @@ func (h *chatHandler) chat(c *gin.Context) {
 	var allTools []tool.InvokableTool
 	allTools = append(allTools, sqlTool)
 
-	// 收集 skill tool 的 name → InvokableTool 映射，供执行阶段使用
+	// 保留 tool 名称，skill tool 不能覆盖
+		reservedTools := map[string]bool{"execute_sql": true}
+
+		// 收集 skill tool 的 name → InvokableTool 映射，供执行阶段使用
 	skillToolMap := make(map[string]tool.InvokableTool)
 	if h.skillRegistry != nil {
 		for _, sk := range h.skillRegistry.AllSkills() {
 			for _, st := range sk.Tools {
+				if reservedTools[st.Name] {
+					logger.Error("skill_setup", "skill tool name conflicts with reserved tool", map[string]any{
+						"tool": st.Name,
+					})
+					continue
+				}
 				einoTool := skill.NewEinoTool(h.skillRunner, &st)
 				allTools = append(allTools, einoTool)
 				skillToolMap[st.Name] = einoTool
