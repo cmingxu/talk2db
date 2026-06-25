@@ -5,3 +5,5 @@ web/node_modules/
 web/dist/
 .DS_Store
 .claude/
+docs
+node_modules
