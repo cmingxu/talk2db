@@ -3,11 +3,14 @@ import { apiFetch } from './client';
 export interface Datasource {
   id: number;
   name: string;
+  slug: string;
   engine: string;
   host: string;
   port: number;
   username: string;
   databaseName: string;
+  chatTitle: string;
+  chatDesc: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -21,12 +24,15 @@ export interface TableSpace {
 
 export interface DatasourceCreate {
   name: string;
+  slug: string;
   engine: string;
   host: string;
   port: number;
   username: string;
   password: string;
   databaseName: string;
+  chatTitle: string;
+  chatDesc: string;
 }
 
 export function listDatasources(): Promise<Datasource[]> {
@@ -42,6 +48,12 @@ export function createDatasource(data: DatasourceCreate): Promise<Datasource> {
 
 export function getDatasource(id: number): Promise<Datasource> {
   return apiFetch(`/api/datasources/${id}`);
+}
+
+// lookupDatasource resolves a datasource by slug (e.g. "sakila-movies") or
+// numeric id (legacy /chat/1 links).
+export function lookupDatasource(ref: string): Promise<Datasource> {
+  return apiFetch(`/api/datasources/lookup/${encodeURIComponent(ref)}`);
 }
 
 export function updateDatasource(id: number, data: DatasourceCreate): Promise<void> {

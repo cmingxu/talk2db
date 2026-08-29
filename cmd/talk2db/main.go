@@ -61,21 +61,15 @@ func main() {
 	registry := datasource.NewRegistry()
 	agentFactory := agent.NewAgentFactory(store, registry)
 
-	secret := cfg.SessionSecret
-	if secret == "" {
-		secret = "change-me-to-a-random-secret"
-	}
-
 	skillsDir := os.Getenv("SKILLS_DIR")
 	if skillsDir == "" {
 		skillsDir = "skills"
 	}
 	adminHandler := admin.New(admin.Config{
-		DB:            store,
-		Registry:      registry,
-		AgentFactory:  agentFactory,
-		SessionSecret: secret,
-		SkillsDir:     skillsDir,
+		DB:           store,
+		Registry:     registry,
+		AgentFactory: agentFactory,
+		SkillsDir:    skillsDir,
 	})
 
 	adminSrv := &http.Server{

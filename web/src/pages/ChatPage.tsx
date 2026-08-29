@@ -3,7 +3,6 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Send, Loader2, Database } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { useToast } from '../hooks/use-toast';
-import { useAuth } from '../hooks/useAuth';
 import { useSSE } from '../hooks/useSSE';
 import { getSession, getMessages, type Message as Msg } from '../api/sessions';
 import { getDatasource, type Datasource } from '../api/datasources';
@@ -24,6 +23,7 @@ interface ToolStep {
     error?: string;
     type?: string;
     config?: Record<string, unknown>;
+    filename?: string;
   };
 }
 
@@ -35,6 +35,7 @@ interface ToolResultEntry {
   rows?: string[][];
   count?: number;
   error?: string;
+  filename?: string;
 }
 
 function renderHistoryToolResults(json: string) {
@@ -54,6 +55,7 @@ function renderHistoryToolResults(json: string) {
             rows={tr.rows}
             count={tr.count}
             error={tr.error}
+            filename={tr.filename}
           />
         ) : null}
       </div>
@@ -64,11 +66,13 @@ function renderHistoryToolResults(json: string) {
 }
 
 export default function ChatPage() {
-  const { id } = useParams<{ id: string }>();
+  const { id, slug } = useParams<{ id: string; slug: string }>();
   const nav = useNavigate();
   const { toast } = useToast();
-  const { role } = useAuth();
-  const isAdmin = role === 'admin';
+  // Admin chat sessions live at /admin/sessions/:id/chat (no slug in the URL);
+  // datasource chat sessions live at /chat/:slug/session/:id.
+  const isAdmin = !slug;
+  const backTo = isAdmin ? '/admin/sessions' : `/chat/${slug}`;
   const { messages: sseMessages, isStreaming, error: sseError, start: startSSE } = useSSE();
   const [history, setHistory] = useState<Msg[]>([]);
   const [ds, setDs] = useState<Datasource | null>(null);
@@ -138,6 +142,7 @@ export default function ChatPage() {
                 error: m.data.error,
                 type: m.data.type,
                 config: m.data.config,
+                filename: m.data.filename,
               };
             }
             return updated;
@@ -170,6 +175,7 @@ export default function ChatPage() {
                   rows: step.toolResult.rows,
                   count: step.toolResult.count,
                   error: step.toolResult.error,
+                  filename: step.toolResult.filename,
                 });
               }
             }
@@ -229,7 +235,7 @@ export default function ChatPage() {
       <div className={`flex flex-col ${playgroundOpen ? 'w-1/2 pr-2 border-r' : isAdmin ? 'w-full' : 'w-full max-w-3xl mx-auto'}`}>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => nav(isAdmin ? '/sessions' : '/chat')}>
+            <Button variant="ghost" size="sm" onClick={() => nav(backTo)}>
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <h2 className="text-lg font-semibold">{sessionName || 'Chat'}</h2>
@@ -306,6 +312,7 @@ export default function ChatPage() {
                         rows={step.toolResult.rows}
                         count={step.toolResult.count}
                         error={step.toolResult.error}
+                        filename={step.toolResult.filename}
                       />
                     )
                   )}

@@ -1,12 +1,9 @@
-import { useState } from 'react'
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
-import { BarChart3, Settings, Users, Database, MessageSquare, Brain } from 'lucide-react'
+import { useEffect } from 'react'
+import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import { BarChart3, Settings, Database, MessageSquare, Brain, ExternalLink } from 'lucide-react'
 
 import { cn } from './lib/utils'
-import { useAuth } from './hooks/useAuth'
 import Dashboard from './pages/Dashboard'
-import Login from './pages/Login'
-import PrivateRoute from './components/PrivateRoute'
 import DatasourceListPage from './pages/DatasourceList'
 import DatasourceDetailPage from './pages/DatasourceDetail'
 import SessionListPage from './pages/SessionListPage'
@@ -14,86 +11,36 @@ import ChatPage from './pages/ChatPage'
 import NormalChatPage from './pages/NormalChatPage'
 import LLMConfigPage from './pages/LLMConfig'
 import { SystemConfigPage } from './pages/SystemConfig'
-import UserManagement from './pages/UserManagement'
+import { listDatasources } from './api/datasources'
 import { Toaster } from './components/ui/toaster'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "./components/ui/alert-dialog"
 
 const sidebarSections = [
   {
     title: '概览',
     items: [
-      { to: '/dashboard', label: '仪表盘', icon: BarChart3 },
+      { to: '/admin/dashboard', label: '仪表盘', icon: BarChart3 },
     ]
   },
   {
     title: '数据源',
     items: [
-      { to: '/datasources', label: '数据源', icon: Database },
+      { to: '/admin/datasources', label: '数据源', icon: Database },
     ]
   },
   {
     title: '聊天',
     items: [
-      { to: '/sessions', label: '会话', icon: MessageSquare },
+      { to: '/admin/sessions', label: '会话', icon: MessageSquare },
     ]
   },
   {
     title: '设置',
     items: [
-      { to: '/llm-config', label: 'LLM 提供商', icon: Brain },
-      { to: '/system-config', label: '系统', icon: Settings },
-      { to: '/user-management', label: '用户', icon: Users },
+      { to: '/admin/llm-config', label: 'LLM 提供商', icon: Brain },
+      { to: '/admin/system-config', label: '系统', icon: Settings },
     ]
   }
 ]
-
-function LogoutButton() {
-  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
-
-  const handleLogout = async () => {
-    try {
-      await fetch('/api/logout', { method: 'POST' });
-      window.location.href = '/login';
-    } catch (err) {
-      console.error('Logout failed:', err);
-    }
-  };
-
-  return (
-    <>
-      <div
-        className="flex h-9 w-9 items-center justify-center rounded-full border bg-background text-foreground cursor-pointer hover:bg-muted transition-colors"
-        onClick={() => setShowLogoutConfirm(true)}
-        title="退出登录"
-      >
-        <Users className="h-4 w-4" />
-      </div>
-      <AlertDialog open={showLogoutConfirm} onOpenChange={setShowLogoutConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>确认退出</AlertDialogTitle>
-            <AlertDialogDescription>
-              确定要退出登录吗？
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={handleLogout}>退出登录</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
-  )
-}
 
 function AdminLayout() {
   return (
@@ -108,9 +55,13 @@ function AdminLayout() {
             <div className="text-xs text-muted-foreground">AI 驱动的 SQL 助手</div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <LogoutButton />
-        </div>
+        <NavLink
+          to="/chat"
+          className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+        >
+          <ExternalLink className="h-4 w-4" />
+          打开聊天页
+        </NavLink>
       </header>
 
       <div className="flex min-h-[calc(100vh-3.5rem)]">
@@ -152,7 +103,8 @@ function AdminLayout() {
         <main className="flex min-h-[calc(100vh-3.5rem)] flex-1 flex-col p-6 bg-slate-50">
           <div className="flex-1">
             <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              {/* Nested Routes match relative to the /admin base */}
+              <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/datasources" element={<DatasourceListPage />} />
               <Route path="/datasources/:id" element={<DatasourceDetailPage />} />
@@ -160,8 +112,7 @@ function AdminLayout() {
               <Route path="/sessions/:id/chat" element={<ChatPage />} />
               <Route path="/llm-config" element={<LLMConfigPage />} />
               <Route path="/system-config" element={<SystemConfigPage />} />
-              <Route path="/user-management" element={<UserManagement />} />
-              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+              <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />
             </Routes>
           </div>
           <footer className="mt-8 border-t pt-4 text-xs text-muted-foreground">
@@ -173,7 +124,27 @@ function AdminLayout() {
   )
 }
 
-function NormalLayout() {
+// Redirect /chat (no datasource in URL) to the first datasource's chat page,
+// falling back to the admin datasource list when there are none.
+function ChatIndexRedirect() {
+  const nav = useNavigate()
+
+  useEffect(() => {
+    listDatasources()
+      .then((list) => {
+        if (list.length > 0) {
+          nav(`/chat/${list[0].slug}`, { replace: true })
+        } else {
+          nav('/admin/datasources', { replace: true })
+        }
+      })
+      .catch(() => nav('/admin/datasources', { replace: true }))
+  }, [nav])
+
+  return null
+}
+
+function ChatLayout() {
   return (
     <div className="min-h-screen text-foreground dot-grid">
       <header className="flex h-14 items-center justify-between border-b bg-card px-4 relative z-10">
@@ -186,14 +157,22 @@ function NormalLayout() {
             <div className="text-xs text-muted-foreground">AI 驱动的 SQL 助手</div>
           </div>
         </div>
-        <LogoutButton />
+        <NavLink
+          to="/admin/dashboard"
+          title="管理后台"
+          aria-label="管理后台"
+          className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+        >
+          <Settings className="h-4 w-4" />
+        </NavLink>
       </header>
 
       <main className="p-4 relative z-10">
         <Routes>
-          <Route path="/" element={<Navigate to="/chat" replace />} />
-          <Route path="/chat" element={<NormalChatPage />} />
-          <Route path="/chat/:id" element={<ChatPage />} />
+          {/* Nested Routes match relative to the /chat base */}
+          <Route path="/" element={<ChatIndexRedirect />} />
+          <Route path="/:slug" element={<NormalChatPage />} />
+          <Route path="/:slug/session/:id" element={<ChatPage />} />
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
       </main>
@@ -202,24 +181,13 @@ function NormalLayout() {
 }
 
 export default function App() {
-  const { isLoading, role } = useAuth();
-
-  if (isLoading) {
-    return <div className="flex items-center justify-center h-screen">加载中...</div>;
-  }
-
   return (
     <>
       <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route
-          path="/*"
-          element={
-            <PrivateRoute>
-              {role === 'admin' ? <AdminLayout /> : <NormalLayout />}
-            </PrivateRoute>
-          }
-        />
+        <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />
+        <Route path="/admin/*" element={<AdminLayout />} />
+        <Route path="/chat/*" element={<ChatLayout />} />
+        <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />
       </Routes>
       <Toaster />
     </>

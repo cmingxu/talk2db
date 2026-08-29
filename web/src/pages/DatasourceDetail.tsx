@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CheckCircle, Loader2, XCircle, RefreshCw } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Loader2, XCircle, RefreshCw, MessageSquareText } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -17,7 +17,7 @@ export default function DatasourceDetailPage() {
   const { toast } = useToast();
   const [ds, setDs] = useState<Datasource | null>(null);
   const [edit, setEdit] = useState(false);
-  const [form, setForm] = useState({ host: '', port: 0, username: '', password: '', databaseName: '' });
+  const [form, setForm] = useState({ host: '', port: 0, username: '', password: '', databaseName: '', slug: '', chatTitle: '', chatDesc: '' });
   const [testResult, setTestResult] = useState<{ ok?: boolean; error?: string; tables?: string[] } | null>(null);
   const [testing, setTesting] = useState(false);
   const [tableSpaces, setTableSpaces] = useState<TableSpace[]>([]);
@@ -30,7 +30,7 @@ export default function DatasourceDetailPage() {
     try {
       const d = await getDatasource(Number(id));
       setDs(d);
-      setForm({ host: d.host, port: d.port, username: d.username, password: '', databaseName: d.databaseName });
+      setForm({ host: d.host, port: d.port, username: d.username, password: '', databaseName: d.databaseName, slug: d.slug, chatTitle: d.chatTitle, chatDesc: d.chatDesc });
       const ts = await listTableSpaces(Number(id));
       setTableSpaces(ts);
     } catch (e: any) {
@@ -113,6 +113,37 @@ export default function DatasourceDetailPage() {
           <div><Label>用户名</Label><Input value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} disabled={!edit} /></div>
           <div><Label>密码</Label><Input type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} disabled={!edit} placeholder={edit ? '' : '（未更改）'} /></div>
           <div><Label>数据库</Label><Input value={form.databaseName} onChange={e => setForm({ ...form, databaseName: e.target.value })} disabled={!edit} /></div>
+        </div>
+
+        {/* Chat page settings — grouped and visually distinct from connection fields */}
+        <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-4">
+          <div className="flex items-center gap-2">
+            <MessageSquareText className="h-4 w-4 text-primary" />
+            <span className="text-sm font-semibold">聊天页设置</span>
+            <span className="text-xs text-muted-foreground">显示在数据源聊天页顶部的标题与描述</span>
+          </div>
+          <div className="grid grid-cols-1 gap-4">
+            <div>
+              <Label>聊天页访问路径 (slug)</Label>
+              <Input value={form.slug} onChange={e => setForm({ ...form, slug: e.target.value })} disabled={!edit} placeholder="如 sakila-movies" />
+              <p className="text-xs text-muted-foreground mt-1">聊天页地址为 /chat/{form.slug || '…'}，修改后旧链接将失效（数字 ID 仍可访问）</p>
+            </div>
+            <div>
+              <Label>聊天页标题</Label>
+              <Input value={form.chatTitle} onChange={e => setForm({ ...form, chatTitle: e.target.value })} disabled={!edit} placeholder="默认使用数据源名称" />
+            </div>
+            <div>
+              <Label>聊天页描述</Label>
+              <textarea
+                value={form.chatDesc}
+                onChange={e => setForm({ ...form, chatDesc: e.target.value })}
+                disabled={!edit}
+                rows={3}
+                placeholder="例如：本数据源为 Sakila 示例电影数据库，包含 1000 部电影、2000 位演员等数据。"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm resize-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            </div>
+          </div>
         </div>
 
         <div className="flex gap-2">

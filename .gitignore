@@ -7,3 +7,5 @@ web/dist/
 .claude/
 docs
 node_modules
+.gocache/
+.npmcache

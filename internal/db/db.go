@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -114,7 +115,74 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.CreateDefaultLLMConfig(ctx); err != nil {
 		return err
 	}
+
+	// Default chat_title to the datasource name (empty means "use name").
+	if err := s.db.WithContext(ctx).Exec(
+		"UPDATE datasources SET chat_title = name WHERE chat_title IS NULL OR chat_title = ''",
+	).Error; err != nil {
+		return err
+	}
+
+	// Backfill missing slugs (auto-derived from the name, unique).
+	if err := s.backfillSlugs(ctx); err != nil {
+		return err
+	}
 	return nil
+}
+
+// backfillSlugs generates slugs for datasources that don't have one yet.
+// Idempotent: only empty slugs are touched.
+func (s *Store) backfillSlugs(ctx context.Context) error {
+	var list []models.Datasource
+	if err := s.db.WithContext(ctx).Find(&list).Error; err != nil {
+		return err
+	}
+	used := make(map[string]bool, len(list))
+	for _, d := range list {
+		if d.Slug != "" {
+			used[d.Slug] = true
+		}
+	}
+	for _, d := range list {
+		if d.Slug != "" {
+			continue
+		}
+		base := Slugify(d.Name)
+		if base == "" {
+			base = fmt.Sprintf("ds-%d", d.ID)
+		}
+		slug := base
+		for i := 2; used[slug]; i++ {
+			slug = fmt.Sprintf("%s-%d", base, i)
+		}
+		used[slug] = true
+		if err := s.db.WithContext(ctx).Model(&models.Datasource{}).Where("id = ?", d.ID).Update("slug", slug).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Slugify converts a string into a URL-friendly slug: lowercase, runs of
+// non-alphanumeric characters become single dashes, trimmed at both ends.
+// Non-ASCII characters (e.g. Chinese) are dropped.
+func Slugify(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	prevDash := false
+	for _, r := range s {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash && b.Len() > 0 {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 // ─── SystemConfig ──────────────────────────────────────────
@@ -288,10 +356,27 @@ func (s *Store) ListDatasources(ctx context.Context) ([]models.Datasource, error
 func (s *Store) UpdateDatasource(ctx context.Context, ds models.Datasource) error {
 	ds.UpdatedAt = time.Now()
 	return s.db.WithContext(ctx).Model(&models.Datasource{}).Where("id = ?", ds.ID).Updates(map[string]interface{}{
-		"name": ds.Name, "engine": ds.Engine, "host": ds.Host,
+		"name": ds.Name, "slug": ds.Slug, "engine": ds.Engine, "host": ds.Host,
 		"port": ds.Port, "username": ds.Username, "password": ds.Password,
-		"database_name": ds.DatabaseName, "updated_at": ds.UpdatedAt,
+		"database_name": ds.DatabaseName, "chat_title": ds.ChatTitle, "chat_desc": ds.ChatDesc, "updated_at": ds.UpdatedAt,
 	}).Error
+}
+
+// LookupDatasource finds a datasource by slug or numeric id. Used to resolve
+// chat URLs like /chat/sakila-movies (and legacy /chat/1 links).
+func (s *Store) LookupDatasource(ctx context.Context, ref string) (models.Datasource, error) {
+	var ds models.Datasource
+	err := s.db.WithContext(ctx).Where("slug = ?", ref).First(&ds).Error
+	if err == nil {
+		return ds, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return models.Datasource{}, err
+	}
+	if id, perr := strconv.ParseInt(ref, 10, 64); perr == nil {
+		return s.GetDatasource(ctx, id)
+	}
+	return models.Datasource{}, gorm.ErrRecordNotFound
 }
 
 func (s *Store) DeleteDatasource(ctx context.Context, id int64) error {

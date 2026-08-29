@@ -23,12 +23,12 @@ The `embed` build tag controls whether the React SPA is embedded in the Go binar
 ```
 cmd/talk2db/main.go          — bootstrap: opens DB, creates registry, starts Gin server
 internal/
-  config/config.go           — env-based config (ADMIN_ADDR, DB_DRIVER, DB_DSN, SESSION_SECRET)
+  config/config.go           — env-based config (ADMIN_ADDR, DB_DRIVER, DB_DSN)
   db/db.go                   — GORM Store: auto-migrate models, CRUD for all entities
   models/                    — GORM models (User, Datasource, TableSpace, Session, Message, LLMConfig, SystemConfig)
-  admin/                     — Gin HTTP handlers + cookie-session auth middleware
+  admin/                     — Gin HTTP handlers (no auth — single-user mode, everyone is admin)
     admin.go                 — route registration and handler wiring
-    auth.go                  — session auth middleware, all /api/* (except /api/login) protected
+    auth.go                  — identity helpers only; auth/login removed (getUserID returns a fixed user)
     handler_chat.go          — SSE-based chat: loads agent, streams thinking/message/sql/done events
     handler_datasource.go    — CRUD for datasources
     handler_session.go       — CRUD for sessions
@@ -55,21 +55,26 @@ internal/
 
 ```
 web/src/
-  App.tsx                    — sidebar layout + route definitions
-  pages/                     — Dashboard, DatasourceList, DatasourceDetail, SessionList, ChatPage, LLMConfig, SystemConfig, UserManagement, Login
-  components/                — PrivateRoute, ChangePasswordModal, DeleteUserModal, ui/ (shadcn-style primitives)
-  hooks/                     — useAuth, useSSE (Server-Sent Events client), use-toast
+  App.tsx                    — layouts + route definitions: /admin/* (management) and /chat/* (per-datasource chat)
+  pages/                     — Dashboard, DatasourceList, DatasourceDetail, SessionList, ChatPage, NormalChatPage, LLMConfig, SystemConfig
+  components/                — ui/ (shadcn-style primitives), ToolCallBlock, ToolResultBlock, EChartsBlock, SqlPlayground
+  hooks/                     — useSSE (Server-Sent Events client), use-toast
   api/                       — typed API client functions (client.ts, datasources.ts, llm.ts, sessions.ts)
 ```
 
 UI uses React Router v7, Tailwind CSS, Radix UI primitives, lucide-react icons.
+
+### URL scheme (no auth)
+
+- **Admin:** `/admin` → dashboard, datasources, sessions, LLM config, system config
+- **Chat per datasource:** `/chat/:slug` (chat landing bound to one datasource — no datasource selector) and `/chat/:slug/session/:id` (conversation). The slug is a unique, editable field on the datasource (auto-derived from the name when empty); legacy `/chat/:id` numeric links still resolve. The admin datasource list shows a chat link for each datasource.
+- Every `/api/*` endpoint is open (no login/session).
 
 ### Key dependencies
 
 - **HTTP framework:** Gin (`github.com/gin-gonic/gin`)
 - **ORM:** GORM with SQLite (glebarez) and PostgreSQL drivers
 - **AI agent framework:** CloudWeGo Eino (`github.com/cloudwego/eino`) — ReAct agent + tool calling
-- **Session store:** gorilla/sessions (cookie-based)
 - **Target DB drivers:** go-sql-driver/mysql, lib/pq, go-ora (Oracle)
 
 ## Environment variables
@@ -80,8 +85,7 @@ UI uses React Router v7, Tailwind CSS, Radix UI primitives, lucide-react icons.
 | `DB_DRIVER` | `sqlite` | App DB driver (`sqlite` or `pgx`) |
 | `DB_DSN` | `var/db/app.sqlite` | App DB connection string |
 | `DATABASE_URL` | — | Overrides DB driver to `pgx` and sets DSN |
-| `SESSION_SECRET` | `change-me-to-a-random-secret` | Cookie session encryption key |
 
-## Default login
+## Auth
 
-`admin` / `admin` — created automatically on first startup by `Store.CreateDefaultUser()`.
+Authentication/authorization was removed — Talk2DB runs as a single-user tool. There is no login; every request is treated as admin, and all `/api/*` endpoints are open. All sessions are attributed to the fixed default user (see `internal/admin/auth.go`).

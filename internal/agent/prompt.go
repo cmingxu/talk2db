@@ -50,6 +50,7 @@ func BuildSystemPrompt(ctx context.Context, registry *datasource.Registry, ds mo
 	sb.WriteString("- 如果用户的问题存在歧义，先向用户澄清再写 SQL。\n")
 	sb.WriteString("- 以清晰易读的格式展示查询结果。\n")
 	sb.WriteString("- 使用该数据库引擎对应的 SQL 方言。\n")
+	sb.WriteString("- 调用 execute_sql 时，可通过 filename 参数为查询结果指定有意义的下载文件名（不含扩展名，例如 '2024年各部门销售额'）。\n")
 
 	return sb.String()
 }

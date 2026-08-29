@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/sessions"
 
 	"talk2db/internal/agent"
 	"talk2db/internal/datasource"
@@ -17,89 +16,17 @@ import (
 )
 
 type Config struct {
-	DB            *db.Store
-	Registry      *datasource.Registry
-	AgentFactory  *agent.AgentFactory
-	SessionSecret string
-	SkillsDir     string // skill 包目录路径，为空则默认 "skills"
+	DB           *db.Store
+	Registry     *datasource.Registry
+	AgentFactory *agent.AgentFactory
+	SkillsDir    string // skill 包目录路径，为空则默认 "skills"
 }
 
 func New(cfg Config) http.Handler {
-	sessionStore := sessions.NewCookieStore([]byte(cfg.SessionSecret))
-
 	r := gin.New()
 	r.Use(gin.Recovery())
-	r.Use(authMiddleware(sessionStore))
-
-	// ── Auth ────────────────────────────────────────────────
-	r.POST("/api/login", func(c *gin.Context) {
-		var req struct {
-			Nickname string `json:"nickname"`
-			Password string `json:"password"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		user, err := cfg.DB.GetUserByNickname(c.Request.Context(), req.Nickname)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
-			return
-		}
-
-		if user.Password != req.Password {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
-			return
-		}
-
-		session, _ := sessionStore.Get(c.Request, "session-name")
-		session.Values["authenticated"] = true
-		session.Values["userID"] = user.ID
-		session.Values["role"] = user.Role
-		secure := isSecureRequest(c.Request)
-		session.Options = &sessions.Options{
-			Path:     "/",
-			MaxAge:   86400 * 30,
-			HttpOnly: true,
-			Secure:   secure,
-			SameSite: http.SameSiteLaxMode,
-		}
-		if err := session.Save(c.Request, c.Writer); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save session"})
-			return
-		}
-
-		log.Printf("[Auth] User '%s' logged in successfully from %s", user.Nickname, c.ClientIP())
-		c.JSON(http.StatusOK, gin.H{"ok": true})
-	})
-
-	r.POST("/api/logout", func(c *gin.Context) {
-		session, _ := sessionStore.Get(c.Request, "session-name")
-		session.Values["authenticated"] = false
-		secure := isSecureRequest(c.Request)
-		session.Options = &sessions.Options{
-			Path:     "/",
-			MaxAge:   -1,
-			HttpOnly: true,
-			Secure:   secure,
-			SameSite: http.SameSiteLaxMode,
-		}
-		if err := session.Save(c.Request, c.Writer); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save session"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"ok": true})
-	})
 
 	api := r.Group("/api")
-
-	// ── Me ──────────────────────────────────────────────────
-	api.GET("/me", func(c *gin.Context) {
-		uid := getUserID(c, sessionStore)
-		role := getRole(c)
-		c.JSON(http.StatusOK, gin.H{"userID": uid, "role": role})
-	})
 
 	// ── Health ──────────────────────────────────────────────
 	r.GET("/api/health", func(c *gin.Context) {
@@ -141,7 +68,7 @@ func New(cfg Config) http.Handler {
 	})
 
 	// ── Users ───────────────────────────────────────────────
-	uh := &userHandler{store: cfg.DB, sessionStore: sessionStore}
+	uh := &userHandler{store: cfg.DB}
 	userGroup := api.Group("/users", requireAdmin())
 	userGroup.GET("", uh.list)
 	userGroup.POST("", uh.create)
@@ -159,6 +86,7 @@ func New(cfg Config) http.Handler {
 	dh := &datasourceHandler{store: cfg.DB}
 	api.GET("/datasources", dh.list)
 	api.POST("/datasources", requireAdmin(), dh.create)
+	api.GET("/datasources/lookup/:ref", dh.lookup)
 	api.GET("/datasources/:id", dh.get)
 	api.PUT("/datasources/:id", requireAdmin(), dh.update)
 	api.DELETE("/datasources/:id", requireAdmin(), dh.delete)
@@ -174,7 +102,7 @@ func New(cfg Config) http.Handler {
 	tableGroup.POST("/execute", tsh.executeSql)
 
 	// ── Sessions ────────────────────────────────────────────
-	sessH := &sessionHandler{store: cfg.DB, sessionStore: sessionStore}
+	sessH := &sessionHandler{store: cfg.DB}
 	api.GET("/sessions", sessH.list)
 	api.POST("/sessions", sessH.create)
 	api.GET("/sessions/recent", sessH.recent)
@@ -223,7 +151,6 @@ func New(cfg Config) http.Handler {
 		store:         cfg.DB,
 		registry:      cfg.Registry,
 		agentFactory:  cfg.AgentFactory,
-		sessionStore:  sessionStore,
 		memoryStore:   agent.GetMemoryStore(),
 		skillRegistry: skillReg,
 		skillRunner:   skillRunner,
@@ -233,35 +160,13 @@ func New(cfg Config) http.Handler {
 
 	// ── Normal User Chat Session ─────────────────────────────
 	api.POST("/normal/chat-session", func(c *gin.Context) {
-		userID := getUserID(c, sessionStore)
-		role := getRole(c)
-		if role != models.RoleNormal {
-			c.JSON(http.StatusForbidden, gin.H{"error": "normal users only"})
-			return
-		}
+		userID := getUserID(c)
 
 		var req struct {
 			DatasourceID int64 `json:"datasourceId"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		assigned, err := cfg.DB.GetUserDatasourceIDs(c.Request.Context(), userID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		found := false
-		for _, id := range assigned {
-			if id == req.DatasourceID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			c.JSON(http.StatusForbidden, gin.H{"error": "datasource not assigned"})
 			return
 		}
 

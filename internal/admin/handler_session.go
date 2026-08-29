@@ -5,7 +5,6 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/sessions"
 
 	"talk2db/internal/agent"
 	"talk2db/internal/db"
@@ -13,12 +12,11 @@ import (
 )
 
 type sessionHandler struct {
-	store        *db.Store
-	sessionStore sessions.Store
+	store *db.Store
 }
 
 func (h *sessionHandler) list(c *gin.Context) {
-	userID := getUserID(c, h.sessionStore)
+	userID := getUserID(c)
 	if userID <= 0 {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
@@ -56,7 +54,7 @@ type recentSession struct {
 }
 
 func (h *sessionHandler) recent(c *gin.Context) {
-	userID := getUserID(c, h.sessionStore)
+	userID := getUserID(c)
 	if userID <= 0 {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
@@ -96,7 +94,7 @@ func (h *sessionHandler) recent(c *gin.Context) {
 }
 
 func (h *sessionHandler) create(c *gin.Context) {
-	userID := getUserID(c, h.sessionStore)
+	userID := getUserID(c)
 	if userID <= 0 {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
@@ -191,7 +189,7 @@ func (h *sessionHandler) delete(c *gin.Context) {
 }
 
 func (h *sessionHandler) checkSessionOwnership(c *gin.Context, session models.Session) bool {
-	userID := getUserID(c, h.sessionStore)
+	userID := getUserID(c)
 	role := getRole(c)
 	if role != models.RoleAdmin && session.UserID != userID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})

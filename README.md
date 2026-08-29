@@ -23,7 +23,7 @@ make build         # Build binary with embedded frontend
 ./bin/talk2db      # Start the server (default :8080)
 ```
 
-Default login: `admin` / `admin`
+No login required — open http://localhost:8080/admin for management, or `/chat/:datasourceId` for a datasource's chat page (links are listed in the admin datasource view).
 
 For frontend development, run the Vite dev server separately:
 
@@ -41,7 +41,6 @@ cd web && npm run dev
 | `DB_DRIVER` | `sqlite` | App DB driver (`sqlite` or `pgx`) |
 | `DB_DSN` | `var/db/app.sqlite` | App DB connection string |
 | `DATABASE_URL` | — | Overrides DB driver to `pgx` and sets DSN |
-| `SESSION_SECRET` | `change-me-to-a-random-secret` | Cookie session encryption key |
 
 ## Architecture
 
@@ -51,7 +50,7 @@ internal/
   config/config.go           — env-based config
   db/db.go                   — GORM Store: auto-migrate models, CRUD
   models/                    — GORM models
-  admin/                     — Gin HTTP handlers + cookie-session auth
+  admin/                     — Gin HTTP handlers (no auth — single-user mode)
   datasource/                — connection pool registry + engine drivers
   agent/                     — ReAct agent factory, chat model, SQL tool
 web/                         — React + TypeScript frontend (Vite, Tailwind, Radix UI)

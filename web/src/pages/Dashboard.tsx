@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BarChart3, Database, MessageSquare, Users } from 'lucide-react';
+import { BarChart3, Database, MessageSquare } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../hooks/use-toast';
 
@@ -46,9 +46,8 @@ export default function Dashboard() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <StatCard icon={Database} label="数据源" value={stats?.datasource_count ?? 0} onClick={() => nav('/datasources')} />
-        <StatCard icon={MessageSquare} label="会话" value={stats?.session_count ?? 0} onClick={() => nav('/sessions')} />
-        <StatCard icon={Users} label="用户" value={stats?.user_count ?? 0} onClick={() => nav('/user-management')} />
+        <StatCard icon={Database} label="数据源" value={stats?.datasource_count ?? 0} onClick={() => nav('/admin/datasources')} />
+        <StatCard icon={MessageSquare} label="会话" value={stats?.session_count ?? 0} onClick={() => nav('/admin/sessions')} />
       </div>
     </div>
   );

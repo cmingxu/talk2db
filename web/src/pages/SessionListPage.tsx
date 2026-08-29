@@ -36,7 +36,7 @@ export default function SessionListPage() {
       setShowForm(false);
       setName('');
       load();
-      nav(`/sessions/${s.id}/chat`);
+      nav(`/admin/sessions/${s.id}/chat`);
     } catch (e: any) {
       toast({ title: '错误', description: e.message, variant: 'destructive' });
     }
@@ -71,7 +71,7 @@ export default function SessionListPage() {
 
       {datasources.length === 0 && (
         <div className="bg-yellow-50 p-4 rounded-lg text-sm text-yellow-700">
-          创建会话前需要先添加数据源。<a href="/datasources" className="underline font-medium">点此添加</a>
+          创建会话前需要先添加数据源。<a href="/admin/datasources" className="underline font-medium">点此添加</a>
         </div>
       )}
 
@@ -97,7 +97,7 @@ export default function SessionListPage() {
 
       <div className="grid gap-3">
         {sessions.map(s => (
-          <div key={s.id} className="bg-white p-4 rounded-lg border shadow-sm flex items-center justify-between hover:bg-muted/30 cursor-pointer" onClick={() => nav(`/sessions/${s.id}/chat`)}>
+          <div key={s.id} className="bg-white p-4 rounded-lg border shadow-sm flex items-center justify-between hover:bg-muted/30 cursor-pointer" onClick={() => nav(`/admin/sessions/${s.id}/chat`)}>
             <div className="flex items-center gap-3">
               <MessageSquare className="h-5 w-5 text-muted-foreground" />
               <div>

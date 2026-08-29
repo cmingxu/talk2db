@@ -4,15 +4,13 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/sessions"
 
 	"talk2db/internal/db"
 	"talk2db/internal/models"
 )
 
 type userHandler struct {
-	store        *db.Store
-	sessionStore sessions.Store
+	store *db.Store
 }
 
 func (h *userHandler) list(c *gin.Context) {

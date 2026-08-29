@@ -21,6 +21,10 @@ var forbiddenKeywords = []string{"INSERT", "UPDATE", "DELETE", "DROP", "ALTER", 
 // "updates" don't trigger false positives for "UPDATE".
 var keywordPattern = buildKeywordPattern()
 
+// fromTablePattern matches the first table name in a FROM clause (used to
+// derive a default download filename).
+var fromTablePattern = regexp.MustCompile(`(?i)\bfrom\s+([a-zA-Z0-9_."` + "`" + `]+)`)
+
 func buildKeywordPattern() *regexp.Regexp {
 	var parts []string
 	for _, kw := range forbiddenKeywords {
@@ -47,6 +51,9 @@ func ValidateSQL(query string) error {
 
 type sqlToolInput struct {
 	Query string `json:"query" jsonschema:"required" jsonschema_description:"The SELECT SQL query to execute"`
+	// Filename lets the LLM suggest a meaningful download name for the query
+	// result (no extension, e.g. "2024年各部门销售额").
+	Filename string `json:"filename" jsonschema_description:"可选：为查询结果指定有意义的下载文件名（不含扩展名，例如 '2024年各部门销售额'）。不提供时自动根据查询生成。"`
 }
 
 type sqlToolOutput struct {
@@ -54,6 +61,9 @@ type sqlToolOutput struct {
 	Rows    [][]string `json:"rows"`
 	Count   int        `json:"count"`
 	Error   string     `json:"error,omitempty"`
+	// Filename is the suggested download filename (without extension) for
+	// the result, either provided by the LLM or auto-generated.
+	Filename string `json:"filename"`
 }
 
 func NewSQLExecuteTool(reg *datasource.Registry, dsID int64) (tool.InvokableTool, error) {
@@ -63,6 +73,11 @@ func NewSQLExecuteTool(reg *datasource.Registry, dsID int64) (tool.InvokableTool
 			query := strings.TrimSpace(input.Query)
 			if err := ValidateSQL(query); err != nil {
 				return sqlToolOutput{Error: err.Error()}, nil
+			}
+
+			filename := sanitizeFilename(input.Filename)
+			if filename == "" {
+				filename = defaultFilename(query)
 			}
 
 			logger.Info("sql_execute", "executing query", map[string]any{
@@ -131,11 +146,46 @@ func NewSQLExecuteTool(reg *datasource.Registry, dsID int64) (tool.InvokableTool
 				"datasource_id": dsID,
 				"columns":       columns,
 				"row_count":     len(result),
+				"filename":      filename,
 			})
 
-			return sqlToolOutput{Columns: columns, Rows: result, Count: len(result)}, nil
+			return sqlToolOutput{Columns: columns, Rows: result, Count: len(result), Filename: filename}, nil
 		},
 	)
+}
+
+// sanitizeFilename cleans a suggested filename for use as a download name:
+// strips path separators and characters illegal on common filesystems,
+// collapses whitespace, trims trailing dots/spaces and caps the length.
+func sanitizeFilename(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer(
+		"/", "_", "\\", "_", ":", "_", "*", "_", "?", "_",
+		"\"", "_", "<", "_", ">", "_", "|", "_", "\x00", "",
+	)
+	s = replacer.Replace(s)
+	s = strings.Join(strings.Fields(s), "_")
+	s = strings.TrimRight(s, ". ")
+	runes := []rune(s)
+	if len(runes) > 80 {
+		s = string(runes[:80])
+	}
+	return strings.TrimSpace(s)
+}
+
+// defaultFilename derives a download name from the query, using the first
+// table referenced in the FROM clause, or a generic fallback.
+func defaultFilename(query string) string {
+	m := fromTablePattern.FindStringSubmatch(query)
+	if len(m) > 1 {
+		if name := sanitizeFilename(m[1]); name != "" {
+			return name
+		}
+	}
+	return "查询结果"
 }
 
 func ValueToString(v any) string {

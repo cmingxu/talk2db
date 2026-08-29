@@ -1,14 +1,16 @@
 import { useState } from 'react';
-import { Table, AlertCircle, ChevronDown } from 'lucide-react';
+import { Table, AlertCircle, ChevronDown, Download } from 'lucide-react';
+import { downloadExcel, fallbackResultName } from '../lib/downloadExcel';
 
 interface Props {
   columns?: string[];
   rows?: string[][];
   count?: number;
   error?: string;
+  filename?: string;
 }
 
-export default function ToolResultBlock({ columns, rows, count, error }: Props) {
+export default function ToolResultBlock({ columns, rows, count, error, filename }: Props) {
   const [collapsed, setCollapsed] = useState(true);
 
   if (error) {
@@ -48,6 +50,17 @@ export default function ToolResultBlock({ columns, rows, count, error }: Props) 
             {count} row{count !== 1 ? 's' : ''}
           </span>
         )}
+        <span
+          className="ml-auto flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs text-primary hover:bg-primary/20"
+          onClick={e => {
+            e.stopPropagation();
+            if (columns && rows) downloadExcel(columns, rows, filename || fallbackResultName());
+          }}
+          title="下载为 Excel"
+        >
+          <Download className="h-3 w-3" />
+          {(filename || '查询结果') + '.xlsx'}
+        </span>
       </button>
       {!collapsed && (
         <div className="max-h-64 overflow-auto">

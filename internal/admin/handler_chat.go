@@ -9,14 +9,13 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/sessions"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 
 	"talk2db/internal/agent"
-	"talk2db/internal/db"
 	"talk2db/internal/datasource"
+	"talk2db/internal/db"
 	"talk2db/internal/logger"
 	"talk2db/internal/models"
 	"talk2db/internal/skill"
@@ -26,7 +25,6 @@ type chatHandler struct {
 	store         *db.Store
 	registry      *datasource.Registry
 	agentFactory  *agent.AgentFactory
-	sessionStore  sessions.Store
 	memoryStore   *agent.MemoryStore
 	skillRegistry *skill.Registry
 	skillRunner   *skill.Runner
@@ -39,15 +37,9 @@ func (h *chatHandler) messages(c *gin.Context) {
 		return
 	}
 
-	session, err := h.store.GetSession(c.Request.Context(), sessionID)
-	if err != nil {
+	// Ensure the session exists (404 otherwise)
+	if _, err := h.store.GetSession(c.Request.Context(), sessionID); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
-		return
-	}
-	userID := getUserID(c, h.sessionStore)
-	role := getRole(c)
-	if role != models.RoleAdmin && session.UserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
@@ -80,34 +72,6 @@ func (h *chatHandler) chat(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
 		return
-	}
-
-	// Ownership check
-	userID := getUserID(c, h.sessionStore)
-	role := getRole(c)
-	if role != models.RoleAdmin && session.UserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-		return
-	}
-
-	// Datasource permission check for normal users
-	if role == models.RoleNormal {
-		assigned, err := h.store.GetUserDatasourceIDs(c.Request.Context(), userID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		found := false
-		for _, id := range assigned {
-			if id == session.DatasourceID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			c.JSON(http.StatusForbidden, gin.H{"error": "datasource not assigned"})
-			return
-		}
 	}
 
 	ds, err := h.store.GetDatasource(c.Request.Context(), session.DatasourceID)
@@ -193,9 +157,9 @@ func (h *chatHandler) chat(c *gin.Context) {
 	allTools = append(allTools, sqlTool)
 
 	// 保留 tool 名称，skill tool 不能覆盖
-		reservedTools := map[string]bool{"execute_sql": true}
+	reservedTools := map[string]bool{"execute_sql": true}
 
-		// 收集 skill tool 的 name → InvokableTool 映射，供执行阶段使用
+	// 收集 skill tool 的 name → InvokableTool 映射，供执行阶段使用
 	skillToolMap := make(map[string]tool.InvokableTool)
 	if h.skillRegistry != nil {
 		for _, sk := range h.skillRegistry.AllSkills() {
@@ -275,7 +239,6 @@ func (h *chatHandler) chat(c *gin.Context) {
 			return
 		}
 
-
 		if len(resp.ToolCalls) > 0 {
 			// Append assistant message with tool calls to conversation
 			messages = append(messages, resp)
@@ -313,19 +276,21 @@ func (h *chatHandler) chat(c *gin.Context) {
 				} else {
 					// Try SQL result format first (must have columns field to qualify)
 					var sqlResult struct {
-						Columns []string   `json:"columns"`
-						Rows    [][]string `json:"rows"`
-						Count   int        `json:"count"`
-						Error   string     `json:"error,omitempty"`
+						Columns  []string   `json:"columns"`
+						Rows     [][]string `json:"rows"`
+						Count    int        `json:"count"`
+						Error    string     `json:"error,omitempty"`
+						Filename string     `json:"filename"`
 					}
 					if json.Unmarshal([]byte(resultJSON), &sqlResult) == nil && sqlResult.Columns != nil {
 						trData := map[string]any{
-							"tool":    toolName,
-							"type":    "table",
-							"columns": sqlResult.Columns,
-							"rows":    sqlResult.Rows,
-							"count":   sqlResult.Count,
-							"error":   sqlResult.Error,
+							"tool":     toolName,
+							"type":     "table",
+							"columns":  sqlResult.Columns,
+							"rows":     sqlResult.Rows,
+							"count":    sqlResult.Count,
+							"error":    sqlResult.Error,
+							"filename": sqlResult.Filename,
 						}
 						sendSSEEvent(c.Writer, flusher, "tool_result", trData)
 						allToolResults = append(allToolResults, trData)
