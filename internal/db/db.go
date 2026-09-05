@@ -105,6 +105,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		&models.Session{},
 		&models.Message{},
 		&models.LLMConfig{},
+		&models.DashboardPanel{},
 	); err != nil {
 		return err
 	}
@@ -600,4 +601,48 @@ func (l *debugLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql
 	} else {
 		fmt.Printf("[DB:SQL] %s | rows=%d | %v\n", sql, rows, elapsed)
 	}
+}
+
+// ─── DashboardPanel ─────────────────────────────────────────
+
+func (s *Store) ListDashboardPanels(ctx context.Context, datasourceID int64) ([]models.DashboardPanel, error) {
+	var list []models.DashboardPanel
+	err := s.db.WithContext(ctx).
+		Where("datasource_id = ?", datasourceID).
+		Order("sort_order asc, id asc").
+		Find(&list).Error
+	return list, err
+}
+
+func (s *Store) GetDashboardPanel(ctx context.Context, id int64) (models.DashboardPanel, error) {
+	var p models.DashboardPanel
+	err := s.db.WithContext(ctx).First(&p, id).Error
+	return p, err
+}
+
+func (s *Store) CreateDashboardPanel(ctx context.Context, p models.DashboardPanel) (models.DashboardPanel, error) {
+	// Append to the end of the dashboard unless a sort order was given.
+	if p.SortOrder == 0 {
+		var maxOrder int
+		s.db.WithContext(ctx).
+			Model(&models.DashboardPanel{}).
+			Where("datasource_id = ?", p.DatasourceID).
+			Select("COALESCE(MAX(sort_order), 0)").
+			Scan(&maxOrder)
+		p.SortOrder = maxOrder + 1
+	}
+	err := s.db.WithContext(ctx).Create(&p).Error
+	return p, err
+}
+
+func (s *Store) UpdateDashboardPanel(ctx context.Context, p models.DashboardPanel) error {
+	p.UpdatedAt = time.Now()
+	return s.db.WithContext(ctx).Model(&models.DashboardPanel{}).Where("id = ?", p.ID).Updates(map[string]interface{}{
+		"name": p.Name, "sql": p.SQL, "chart_type": p.ChartType,
+		"theme": p.Theme, "sort_order": p.SortOrder, "refresh_interval": p.RefreshInterval, "updated_at": p.UpdatedAt,
+	}).Error
+}
+
+func (s *Store) DeleteDashboardPanel(ctx context.Context, id int64) error {
+	return s.db.WithContext(ctx).Delete(&models.DashboardPanel{}, id).Error
 }

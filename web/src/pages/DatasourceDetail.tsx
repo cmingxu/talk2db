@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, CheckCircle, Loader2, XCircle, RefreshCw, MessageSquareText } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Loader2, XCircle, RefreshCw, MessageSquareText, LayoutDashboard } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -157,6 +157,9 @@ export default function DatasourceDetailPage() {
           )}
           <Button onClick={handleTest} variant="outline" size="sm" disabled={testing}>
             {testing ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null} 测试连接
+          </Button>
+          <Button onClick={() => nav(`/admin/datasources/${ds.id}/dashboard`)} variant="outline" size="sm">
+            <LayoutDashboard className="h-4 w-4 mr-1" /> 仪表盘
           </Button>
         </div>
 

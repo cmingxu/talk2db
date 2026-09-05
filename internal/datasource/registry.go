@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"talk2db/internal/logger"
 	"talk2db/internal/models"
 )
 
@@ -137,7 +138,24 @@ func (r *Registry) ListTables(ctx context.Context, datasourceID int64, dbName st
 	if err != nil {
 		return nil, err
 	}
-	return d.ListTables(db, dbName)
+	logger.Info("sql_schema", "listing tables", map[string]any{
+		"datasource_id": datasourceID,
+		"database":      dbName,
+	})
+	tables, err := d.ListTables(db, dbName)
+	if err != nil {
+		logger.Error("sql_schema", "list tables failed", map[string]any{
+			"datasource_id": datasourceID,
+			"database":      dbName,
+			"error":         err.Error(),
+		})
+		return nil, err
+	}
+	logger.Info("sql_schema", "list tables completed", map[string]any{
+		"datasource_id": datasourceID,
+		"table_count":   len(tables),
+	})
+	return tables, nil
 }
 
 func (r *Registry) DescribeTable(ctx context.Context, datasourceID int64, dbName, table string) ([]ColumnInfo, error) {
@@ -151,5 +169,20 @@ func (r *Registry) DescribeTable(ctx context.Context, datasourceID int64, dbName
 	if err != nil {
 		return nil, err
 	}
-	return d.DescribeTable(db, dbName, table)
+	logger.Info("sql_schema", "describing table", map[string]any{
+		"datasource_id": datasourceID,
+		"database":      dbName,
+		"table":         table,
+	})
+	cols, err := d.DescribeTable(db, dbName, table)
+	if err != nil {
+		logger.Error("sql_schema", "describe table failed", map[string]any{
+			"datasource_id": datasourceID,
+			"database":      dbName,
+			"table":         table,
+			"error":         err.Error(),
+		})
+		return nil, err
+	}
+	return cols, nil
 }

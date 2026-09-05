@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
@@ -12,6 +13,25 @@ import (
 	"talk2db/internal/datasource"
 	"talk2db/internal/logger"
 )
+
+// ctxKey is an unexported type for context keys, avoiding collisions.
+type ctxKey string
+
+const sessionIDKey ctxKey = "talk2db.session_id"
+
+// WithSessionID returns a context carrying the chat session ID so SQL tool
+// logs can be correlated back to the conversation that triggered them.
+func WithSessionID(ctx context.Context, sessionID int64) context.Context {
+	return context.WithValue(ctx, sessionIDKey, sessionID)
+}
+
+// SessionIDFrom returns the session ID stored in ctx, or 0 when absent.
+func SessionIDFrom(ctx context.Context) int64 {
+	if v, ok := ctx.Value(sessionIDKey).(int64); ok {
+		return v
+	}
+	return 0
+}
 
 // forbiddenKeywords are SQL statements that should never be executed.
 var forbiddenKeywords = []string{"INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE"}
@@ -70,8 +90,27 @@ func NewSQLExecuteTool(reg *datasource.Registry, dsID int64) (tool.InvokableTool
 	return utils.InferTool("execute_sql",
 		"Execute a read-only SQL SELECT query against the database and return results as JSON with columns and rows.",
 		func(ctx context.Context, input sqlToolInput) (sqlToolOutput, error) {
+			start := time.Now()
+			sessionID := SessionIDFrom(ctx)
 			query := strings.TrimSpace(input.Query)
+
+			// Log every SQL statement the agent produces, even the ones that
+			// fail validation, so the full SQL trail is available for audit.
+			logger.Info("sql", "agent sql statement", map[string]any{
+				"datasource_id": dsID,
+				"session_id":    sessionID,
+				"query":         query,
+				"filename":      input.Filename,
+			})
+
 			if err := ValidateSQL(query); err != nil {
+				logger.Error("sql", "agent sql rejected", map[string]any{
+					"datasource_id": dsID,
+					"session_id":    sessionID,
+					"query":         query,
+					"error":         err.Error(),
+					"duration_ms":   time.Since(start).Milliseconds(),
+				})
 				return sqlToolOutput{Error: err.Error()}, nil
 			}
 
@@ -80,26 +119,26 @@ func NewSQLExecuteTool(reg *datasource.Registry, dsID int64) (tool.InvokableTool
 				filename = defaultFilename(query)
 			}
 
-			logger.Info("sql_execute", "executing query", map[string]any{
-				"datasource_id": dsID,
-				"query":         query,
-			})
-
 			db, err := reg.GetDB(dsID)
 			if err != nil {
-				logger.Error("sql_execute", "failed to get db connection", map[string]any{
+				logger.Error("sql", "failed to get db connection", map[string]any{
 					"datasource_id": dsID,
+					"session_id":    sessionID,
+					"query":         query,
 					"error":         err.Error(),
+					"duration_ms":   time.Since(start).Milliseconds(),
 				})
 				return sqlToolOutput{Error: err.Error()}, nil
 			}
 
 			rows, err := db.QueryContext(ctx, query)
 			if err != nil {
-				logger.Error("sql_execute", "query execution failed", map[string]any{
+				logger.Error("sql", "query execution failed", map[string]any{
 					"datasource_id": dsID,
+					"session_id":    sessionID,
 					"query":         query,
 					"error":         err.Error(),
+					"duration_ms":   time.Since(start).Milliseconds(),
 				})
 				return sqlToolOutput{Error: err.Error()}, nil
 			}
@@ -107,9 +146,12 @@ func NewSQLExecuteTool(reg *datasource.Registry, dsID int64) (tool.InvokableTool
 
 			columns, err := rows.Columns()
 			if err != nil {
-				logger.Error("sql_result", "failed to get columns", map[string]any{
+				logger.Error("sql", "failed to get columns", map[string]any{
 					"datasource_id": dsID,
+					"session_id":    sessionID,
+					"query":         query,
 					"error":         err.Error(),
+					"duration_ms":   time.Since(start).Milliseconds(),
 				})
 				return sqlToolOutput{Error: err.Error()}, nil
 			}
@@ -122,6 +164,13 @@ func NewSQLExecuteTool(reg *datasource.Registry, dsID int64) (tool.InvokableTool
 					valuePtrs[i] = &values[i]
 				}
 				if err := rows.Scan(valuePtrs...); err != nil {
+					logger.Error("sql", "row scan failed", map[string]any{
+						"datasource_id": dsID,
+						"session_id":    sessionID,
+						"query":         query,
+						"error":         err.Error(),
+						"duration_ms":   time.Since(start).Milliseconds(),
+					})
 					return sqlToolOutput{Error: err.Error()}, nil
 				}
 				row := make([]string, len(columns))
@@ -135,18 +184,26 @@ func NewSQLExecuteTool(reg *datasource.Registry, dsID int64) (tool.InvokableTool
 				result = append(result, row)
 			}
 			if err := rows.Err(); err != nil {
-				logger.Error("sql_result", "row iteration error", map[string]any{
+				logger.Error("sql", "row iteration error", map[string]any{
 					"datasource_id": dsID,
+					"session_id":    sessionID,
+					"query":         query,
 					"error":         err.Error(),
+					"duration_ms":   time.Since(start).Milliseconds(),
 				})
 				return sqlToolOutput{Error: err.Error()}, nil
 			}
 
-			logger.Info("sql_result", "query completed", map[string]any{
+			// Result summary: columns + row count + timing. Full rows are not
+			// logged (they can be large and are returned to the LLM/frontend).
+			logger.Info("sql", "agent sql result", map[string]any{
 				"datasource_id": dsID,
+				"session_id":    sessionID,
+				"query":         query,
 				"columns":       columns,
 				"row_count":     len(result),
 				"filename":      filename,
+				"duration_ms":   time.Since(start).Milliseconds(),
 			})
 
 			return sqlToolOutput{Columns: columns, Rows: result, Count: len(result), Filename: filename}, nil

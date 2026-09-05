@@ -125,6 +125,20 @@ func (h *chatHandler) chat(c *gin.Context) {
 		}
 	}
 
+	// Log when the datasource schema is injected into the conversation.
+	// The schema is the first system message in the message list sent to the LLM.
+	tableNames := make([]string, 0, len(tableSpaces))
+	for _, ts := range tableSpaces {
+		tableNames = append(tableNames, ts.TableName)
+	}
+	logger.Info("chat_context", "schema injected into conversation", map[string]any{
+		"session_id":    sessionID,
+		"datasource_id": ds.ID,
+		"table_count":   len(tableSpaces),
+		"tables":        tableNames,
+		"prompt_chars":  len(systemPrompt),
+	})
+
 	// Get LLM config
 	llmCfg, err := h.store.GetLLMConfig(c.Request.Context())
 	if err != nil {
@@ -208,7 +222,7 @@ func (h *chatHandler) chat(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
+	ctx := agent.WithSessionID(c.Request.Context(), sessionID)
 
 	// Build conversation history from previous DB messages
 	var history []*schema.Message

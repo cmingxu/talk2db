@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import { NavLink, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
 import { BarChart3, Settings, Database, MessageSquare, Brain, ExternalLink } from 'lucide-react'
 
 import { cn } from './lib/utils'
@@ -8,9 +8,10 @@ import DatasourceListPage from './pages/DatasourceList'
 import DatasourceDetailPage from './pages/DatasourceDetail'
 import SessionListPage from './pages/SessionListPage'
 import ChatPage from './pages/ChatPage'
-import NormalChatPage from './pages/NormalChatPage'
 import LLMConfigPage from './pages/LLMConfig'
 import { SystemConfigPage } from './pages/SystemConfig'
+import DashboardView from './pages/DashboardView'
+import DashboardConfigPage from './pages/DashboardConfig'
 import { listDatasources } from './api/datasources'
 import { Toaster } from './components/ui/toaster'
 
@@ -60,7 +61,7 @@ function AdminLayout() {
           className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
         >
           <ExternalLink className="h-4 w-4" />
-          打开聊天页
+          打开仪表盘
         </NavLink>
       </header>
 
@@ -108,6 +109,7 @@ function AdminLayout() {
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/datasources" element={<DatasourceListPage />} />
               <Route path="/datasources/:id" element={<DatasourceDetailPage />} />
+              <Route path="/datasources/:id/dashboard" element={<DashboardConfigPage />} />
               <Route path="/sessions" element={<SessionListPage />} />
               <Route path="/sessions/:id/chat" element={<ChatPage />} />
               <Route path="/llm-config" element={<LLMConfigPage />} />
@@ -124,7 +126,7 @@ function AdminLayout() {
   )
 }
 
-// Redirect /chat (no datasource in URL) to the first datasource's chat page,
+// Redirect /chat (no datasource in URL) to the first datasource's dashboard,
 // falling back to the admin datasource list when there are none.
 function ChatIndexRedirect() {
   const nav = useNavigate()
@@ -133,7 +135,7 @@ function ChatIndexRedirect() {
     listDatasources()
       .then((list) => {
         if (list.length > 0) {
-          nav(`/chat/${list[0].slug}`, { replace: true })
+          nav(`/chat/${list[0].slug}/dashboard`, { replace: true })
         } else {
           nav('/admin/datasources', { replace: true })
         }
@@ -142,6 +144,12 @@ function ChatIndexRedirect() {
   }, [nav])
 
   return null
+}
+
+// Legacy /chat/:slug links now land on the datasource's dashboard.
+function ChatSlugRedirect() {
+  const { slug } = useParams<{ slug: string }>()
+  return <Navigate to={`/chat/${slug}/dashboard`} replace />
 }
 
 function ChatLayout() {
@@ -171,8 +179,8 @@ function ChatLayout() {
         <Routes>
           {/* Nested Routes match relative to the /chat base */}
           <Route path="/" element={<ChatIndexRedirect />} />
-          <Route path="/:slug" element={<NormalChatPage />} />
-          <Route path="/:slug/session/:id" element={<ChatPage />} />
+          <Route path="/:slug" element={<ChatSlugRedirect />} />
+          <Route path="/:slug/dashboard" element={<DashboardView />} />
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
       </main>

@@ -66,13 +66,12 @@ function renderHistoryToolResults(json: string) {
 }
 
 export default function ChatPage() {
-  const { id, slug } = useParams<{ id: string; slug: string }>();
+  const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
   const { toast } = useToast();
-  // Admin chat sessions live at /admin/sessions/:id/chat (no slug in the URL);
-  // datasource chat sessions live at /chat/:slug/session/:id.
-  const isAdmin = !slug;
-  const backTo = isAdmin ? '/admin/sessions' : `/chat/${slug}`;
+  // ChatPage is used from the admin session list only (/admin/sessions/:id/chat).
+  const isAdmin = true;
+  const backTo = '/admin/sessions';
   const { messages: sseMessages, isStreaming, error: sseError, start: startSSE } = useSSE();
   const [history, setHistory] = useState<Msg[]>([]);
   const [ds, setDs] = useState<Datasource | null>(null);

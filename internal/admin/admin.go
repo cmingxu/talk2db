@@ -25,6 +25,7 @@ type Config struct {
 func New(cfg Config) http.Handler {
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(requestLogger())
 
 	api := r.Group("/api")
 
@@ -100,6 +101,17 @@ func New(cfg Config) http.Handler {
 	tableGroup.POST("/tablespaces", tsh.add)
 	tableGroup.DELETE("/tablespaces/:tsid", tsh.remove)
 	tableGroup.POST("/execute", tsh.executeSql)
+
+	// ── Dashboard Panels ─────────────────────────────────────
+	dash := &dashboardHandler{store: cfg.DB, registry: cfg.Registry}
+	panelGroup := api.Group("/datasources/:id/panels")
+	panelGroup.GET("", dash.list)
+	panelGroup.POST("", dash.create)
+	panelGroup.POST("/data", dash.data)
+	panelGroup.POST("/generate", dash.generate)
+	panelGroup.GET("/:pid/export", dash.exportData)
+	panelGroup.PUT("/:pid", dash.update)
+	panelGroup.DELETE("/:pid", dash.delete)
 
 	// ── Sessions ────────────────────────────────────────────
 	sessH := &sessionHandler{store: cfg.DB}

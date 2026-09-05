@@ -51,6 +51,7 @@ func BuildSystemPrompt(ctx context.Context, registry *datasource.Registry, ds mo
 	sb.WriteString("- 以清晰易读的格式展示查询结果。\n")
 	sb.WriteString("- 使用该数据库引擎对应的 SQL 方言。\n")
 	sb.WriteString("- 调用 execute_sql 时，可通过 filename 参数为查询结果指定有意义的下载文件名（不含扩展名，例如 '2024年各部门销售额'）。\n")
+	sb.WriteString("- 涉及相对时间（如'过去十分钟''最近一周''今天'）时，必须使用数据库相对时间函数（如 NOW() - INTERVAL 10 MINUTE、CURRENT_TIMESTAMP），禁止硬编码具体时间戳；NOW() 使用数据源服务器时区。\n")
 
 	return sb.String()
 }

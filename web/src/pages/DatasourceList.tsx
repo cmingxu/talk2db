@@ -1,22 +1,35 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Database, Trash2, Edit3, ExternalLink, MessageSquareText } from 'lucide-react';
+import { Plus, Database, Trash2, Edit3, MessageSquareText, LayoutDashboard, Server } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { useToast } from '../hooks/use-toast';
 import { listDatasources, createDatasource, deleteDatasource, type Datasource, type DatasourceCreate } from '../api/datasources';
+import { listPanels } from '../api/panels';
 
 const ENGINES = ['mysql', 'oracle', 'postgres', 'dameng'];
 
 export default function DatasourceListPage() {
   const [datasources, setDatasources] = useState<Datasource[]>([]);
+  const [panelCounts, setPanelCounts] = useState<Record<number, number>>({});
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<DatasourceCreate>({ name: '', slug: '', engine: 'mysql', host: '', port: 3306, username: '', password: '', databaseName: '', chatTitle: '', chatDesc: '' });
   const { toast } = useToast();
   const nav = useNavigate();
 
-  const load = () => { listDatasources().then(setDatasources).catch(e => toast({ title: '错误', description: e.message, variant: 'destructive' })); };
+  const load = () => {
+    listDatasources()
+      .then(async (list) => {
+        setDatasources(list);
+        const counts: Record<number, number> = {};
+        await Promise.all(list.map(async ds => {
+          try { counts[ds.id] = (await listPanels(ds.id)).length; } catch { counts[ds.id] = 0; }
+        }));
+        setPanelCounts(counts);
+      })
+      .catch(e => toast({ title: '错误', description: e.message, variant: 'destructive' }));
+  };
   useEffect(() => { load(); }, []);
 
   const handleCreate = async () => {
@@ -120,48 +133,69 @@ export default function DatasourceListPage() {
         </div>
       )}
 
-      <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-muted/50 border-b">
-            <tr>
-              <th className="text-left p-3 font-medium">名称</th>
-              <th className="text-left p-3 font-medium">引擎</th>
-              <th className="text-left p-3 font-medium">主机:端口</th>
-              <th className="text-left p-3 font-medium">数据库</th>
-              <th className="text-left p-3 font-medium">聊天链接</th>
-              <th className="text-right p-3 font-medium">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {datasources.map(ds => (
-              <tr key={ds.id} className="border-b last:border-b-0 hover:bg-muted/30 cursor-pointer" onClick={() => nav(`/admin/datasources/${ds.id}`)}>
-                <td className="p-3 font-medium">{ds.name}</td>
-                <td className="p-3 uppercase text-xs">{ds.engine}</td>
-                <td className="p-3 text-muted-foreground">{ds.host}:{ds.port}</td>
-                <td className="p-3 text-muted-foreground">{ds.databaseName}</td>
-                <td className="p-3" onClick={e => e.stopPropagation()}>
-                  <Link
-                    to={`/chat/${ds.slug}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                    title={`打开 ${ds.name} 的聊天页`}
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    /chat/{ds.slug}
-                  </Link>
-                </td>
-                <td className="p-3 text-right" onClick={e => e.stopPropagation()}>
-                  <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); nav(`/admin/datasources/${ds.id}`); }}><Edit3 className="h-4 w-4" /></Button>
-                  <Button size="sm" variant="ghost" onClick={() => handleDelete(ds.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
-                </td>
-              </tr>
-            ))}
-            {datasources.length === 0 && (
-              <tr><td colSpan={6} className="p-6 text-center text-muted-foreground">暂无数据源，添加一个以开始使用。</td></tr>
-            )}
-          </tbody>
-        </table>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {datasources.map(ds => (
+          <div key={ds.id} className="bg-white rounded-lg border shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+            {/* Card header */}
+            <div className="flex items-start justify-between gap-2 px-5 pt-4">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                  <Database className="h-4 w-4 text-primary" />
+                </div>
+                <div className="min-w-0">
+                  <div className="font-semibold truncate">{ds.chatTitle || ds.name}</div>
+                  <div className="text-xs text-muted-foreground">{ds.name}</div>
+                </div>
+              </div>
+              <span className="shrink-0 text-[10px] uppercase bg-muted px-2 py-0.5 rounded">{ds.engine}</span>
+            </div>
+
+            {/* Connection info */}
+            <div className="px-5 pt-3 space-y-1">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Server className="h-3.5 w-3.5" />
+                {ds.host}:{ds.port} · {ds.databaseName}
+              </div>
+              <div className="text-xs text-muted-foreground font-mono">/chat/{ds.slug}</div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-1.5 px-4 py-3 mt-3 border-t bg-muted/10">
+              <Link
+                to={`/chat/${ds.slug}/dashboard`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="打开仪表盘"
+                className="flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs text-foreground hover:bg-muted"
+              >
+                <LayoutDashboard className="h-3.5 w-3.5" />
+                仪表盘
+                <span className="text-muted-foreground">{panelCounts[ds.id] ?? 0}</span>
+              </Link>
+              <div className="ml-auto flex items-center gap-1">
+                <button
+                  onClick={() => nav(`/admin/datasources/${ds.id}`)}
+                  title="编辑"
+                  className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted text-muted-foreground"
+                >
+                  <Edit3 className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => handleDelete(ds.id)}
+                  title="删除"
+                  className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted text-red-500"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+        {datasources.length === 0 && (
+          <div className="col-span-full bg-white rounded-lg border shadow-sm py-16 text-center text-muted-foreground">
+            暂无数据源，点击右上角「添加」创建一个。
+          </div>
+        )}
       </div>
     </div>
   );

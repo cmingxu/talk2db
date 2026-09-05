@@ -35,7 +35,8 @@ internal/
     handler_table_space.go   — table space management + test connection
     handler_llm.go           — LLM provider config CRUD + test endpoint
     handler_system.go        — system config (warn text)
-    handler_users.go         — user management
+    handler_dashboard.go     — per-datasource dashboard panels CRUD + batch data execution
+    handler_users.go         — user management (unused, no auth)
     util.go                  — shared helpers
   datasource/
     registry.go              — connection pool registry; EngineDriver interface for Open/ListTables/DescribeTable
@@ -56,8 +57,8 @@ internal/
 ```
 web/src/
   App.tsx                    — layouts + route definitions: /admin/* (management) and /chat/* (per-datasource chat)
-  pages/                     — Dashboard, DatasourceList, DatasourceDetail, SessionList, ChatPage, NormalChatPage, LLMConfig, SystemConfig
-  components/                — ui/ (shadcn-style primitives), ToolCallBlock, ToolResultBlock, EChartsBlock, SqlPlayground
+  pages/                     — Dashboard, DatasourceList, DatasourceDetail, SessionList, ChatPage, DashboardView, DashboardConfig, LLMConfig, SystemConfig
+  components/                — ui/ (shadcn-style primitives), ToolCallBlock, ToolResultBlock, EChartsBlock, EChart, InlineChatPanel, SqlPlayground
   hooks/                     — useSSE (Server-Sent Events client), use-toast
   api/                       — typed API client functions (client.ts, datasources.ts, llm.ts, sessions.ts)
 ```
@@ -67,7 +68,8 @@ UI uses React Router v7, Tailwind CSS, Radix UI primitives, lucide-react icons.
 ### URL scheme (no auth)
 
 - **Admin:** `/admin` → dashboard, datasources, sessions, LLM config, system config
-- **Chat per datasource:** `/chat/:slug` (chat landing bound to one datasource — no datasource selector) and `/chat/:slug/session/:id` (conversation). The slug is a unique, editable field on the datasource (auto-derived from the name when empty); legacy `/chat/:id` numeric links still resolve. The admin datasource list shows a chat link for each datasource.
+- **Chat per datasource:** `/chat/:slug` (legacy links) and `/chat` redirect to `/chat/:slug/dashboard` — the datasource's single page. The dashboard embeds the chat panel (InlineChatPanel, 1/4 width right side, toggleable fullscreen), so there is no separate datasource chat landing page. `/chat/:slug/session/:id` was removed; the admin session chat lives at `/admin/sessions/:id/chat`. The slug is a unique, editable field on the datasource (auto-derived from the name when empty); legacy `/chat/:id` numeric links still resolve. The admin datasource list (card layout) has a per-datasource 仪表盘 link with the panel count.
+- **Dashboard:** one per datasource, made of `dashboard_panels` rows (name, SQL, chartType bar/pie/line/text/scatter/bar-stack, theme, sortOrder, refreshInterval seconds). Configured at `/admin/datasources/:id/dashboard` (add/edit/delete/reorder + live query preview + AI 生成面板 wizard); data endpoint `POST /api/datasources/:id/panels/data` executes panel SQLs in parallel (validated SELECT, 1000-row cap per panel for charts). View at `/chat/:slug/dashboard`: cards render progressively (per-panel async fetch), auto-refresh at their own interval (master toggle in the header), per-card exports: raw full CSV via `GET /api/datasources/:id/panels/:pid/export` (no row cap, RFC 5987 filename) and current-view CSV, plus a fullscreen zoom popup (放大). The admin datasource list (card layout) has a per-datasource 仪表盘 link with the panel count.
 - Every `/api/*` endpoint is open (no login/session).
 
 ### Key dependencies
