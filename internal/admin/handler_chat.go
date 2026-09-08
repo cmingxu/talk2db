@@ -59,13 +59,25 @@ func (h *chatHandler) chat(c *gin.Context) {
 	}
 
 	var req struct {
-		Message string `json:"message"`
+		Message     string          `json:"message"`
+		Attachments []*UploadedData `json:"attachments"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Message) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "message required"})
 		return
 	}
-	userContent := strings.TrimSpace(req.Message)
+	rawMessage := strings.TrimSpace(req.Message)
+
+	// Validate newly uploaded attachments (client-parsed content).
+	for _, up := range req.Attachments {
+		if up == nil {
+			continue
+		}
+		if err := up.Validate(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
 
 	// Load session and datasource
 	session, err := h.store.GetSession(c.Request.Context(), sessionID)
@@ -80,6 +92,24 @@ func (h *chatHandler) chat(c *gin.Context) {
 		return
 	}
 
+	// Persist newly uploaded attachments and load the full session set so
+	// later turns can re-extract a question-specific subset from them.
+	for _, up := range req.Attachments {
+		if up == nil {
+			continue
+		}
+		if _, err := h.store.AddAttachment(c.Request.Context(), up.ToModel(sessionID)); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Errorf("save attachment: %w", err).Error()})
+			return
+		}
+	}
+	sessionAttachments, err := h.store.ListAttachments(c.Request.Context(), sessionID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Errorf("list attachments: %w", err).Error()})
+		return
+	}
+	uploads := uploadsFromModels(sessionAttachments)
+
 	// Load previous messages BEFORE saving current one (so history excludes it)
 	prevMessages, err := h.store.ListMessages(c.Request.Context(), sessionID, 0)
 	if err != nil {
@@ -89,11 +119,13 @@ func (h *chatHandler) chat(c *gin.Context) {
 		})
 	}
 
-	// Save user message
+	// Save user message (content is the raw question; the extracted subset is
+	// only injected into the live LLM conversation, not persisted).
 	_, err = h.store.AddMessage(c.Request.Context(), models.Message{
-		SessionID: sessionID,
-		Role:      "user",
-		Content:   userContent,
+		SessionID:   sessionID,
+		Role:        "user",
+		Content:     rawMessage,
+		Attachments: attachmentNames(req.Attachments),
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -101,10 +133,11 @@ func (h *chatHandler) chat(c *gin.Context) {
 	}
 
 	logger.Info("chat_request", "incoming chat message", map[string]any{
-		"session_id":    sessionID,
-		"user_id":       session.UserID,
-		"datasource_id": ds.ID,
-		"message":       userContent,
+		"session_id":       sessionID,
+		"user_id":          session.UserID,
+		"datasource_id":    ds.ID,
+		"message":          rawMessage,
+		"attachment_count": len(uploads),
 	})
 
 	// Load table spaces for this datasource
@@ -123,6 +156,11 @@ func (h *chatHandler) chat(c *gin.Context) {
 		if skillPrompt != "" {
 			systemPrompt += "\n\n" + skillPrompt
 		}
+	}
+
+	// Tell the agent which attachments are available in this session.
+	if len(uploads) > 0 {
+		systemPrompt += "\n\n" + buildAttachmentRegistryLine(uploads)
 	}
 
 	// Log when the datasource schema is injected into the conversation.
@@ -158,6 +196,19 @@ func (h *chatHandler) chat(c *gin.Context) {
 
 	// Create model and tools
 	chatModel := agent.NewOpenAIChatModel(llmCfg.BaseURL, llmCfg.APIKey, llmCfg.ModelName)
+
+	// One-time "intention guess" round: extract the attachment subset relevant
+	// to this specific question. This is the only round that may see the full
+	// attachment content; the returned subset is what the main agent carries
+	// for the rest of the turn, so it can be resent cheaply every ReAct step.
+	relevantBlock := ""
+	if len(uploads) > 0 {
+		relevantBlock = extractRelevantBlock(c.Request.Context(), chatModel, rawMessage, uploads)
+	}
+	newUserMsg := rawMessage
+	if relevantBlock != "" {
+		newUserMsg = rawMessage + "\n\n" + relevantBlock
+	}
 
 	// 1. execute_sql tool (always present)
 	sqlTool, err := agent.NewSQLExecuteTool(h.registry, ds.ID)
@@ -234,7 +285,7 @@ func (h *chatHandler) chat(c *gin.Context) {
 	}
 
 	sessionMemory := h.memoryStore.Get(sessionID)
-	messages := agent.CompactMessages(systemPrompt, sessionMemory, history, userContent, agent.DefaultMaxTokens)
+	messages := agent.CompactMessages(systemPrompt, sessionMemory, history, newUserMsg, agent.DefaultMaxTokens)
 
 	const maxSteps = 30
 	var allSQL []string
@@ -378,11 +429,11 @@ func (h *chatHandler) chat(c *gin.Context) {
 			}
 
 			// Update session memory with queries and facts from this turn
-			h.updateMemory(ctx, sessionID, userContent, allSQL)
+			h.updateMemory(ctx, sessionID, rawMessage, allSQL)
 
 			// Auto-generate session title on first message
 			if len(prevMessages) == 0 {
-				h.generateTitle(ctx, llmCfg.BaseURL, llmCfg.APIKey, llmCfg.ModelName, sessionID, userContent)
+				h.generateTitle(ctx, llmCfg.BaseURL, llmCfg.APIKey, llmCfg.ModelName, sessionID, rawMessage)
 			}
 
 			logger.Info("chat_response", "chat completed", map[string]any{

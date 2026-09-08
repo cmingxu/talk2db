@@ -104,6 +104,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		&models.TableSpace{},
 		&models.Session{},
 		&models.Message{},
+		&models.Attachment{},
 		&models.LLMConfig{},
 		&models.DashboardPanel{},
 	); err != nil {
@@ -463,11 +464,27 @@ func (s *Store) DeleteSession(ctx context.Context, id int64) error {
 		if err := tx.Delete(&models.Message{}, "session_id = ?", id).Error; err != nil {
 			return err
 		}
+		if err := tx.Delete(&models.Attachment{}, "session_id = ?", id).Error; err != nil {
+			return err
+		}
 		if err := tx.Delete(&models.Session{}, id).Error; err != nil {
 			return err
 		}
 		return nil
 	})
+}
+
+// ─── Attachment ─────────────────────────────────────────
+
+func (s *Store) AddAttachment(ctx context.Context, att models.Attachment) (models.Attachment, error) {
+	err := s.db.WithContext(ctx).Create(&att).Error
+	return att, err
+}
+
+func (s *Store) ListAttachments(ctx context.Context, sessionID int64) ([]models.Attachment, error) {
+	var list []models.Attachment
+	err := s.db.WithContext(ctx).Where("session_id = ?", sessionID).Order("id asc").Find(&list).Error
+	return list, err
 }
 
 // ─── Message ────────────────────────────────────────────────

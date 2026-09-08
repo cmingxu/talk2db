@@ -1,0 +1,32 @@
+services:
+  talk2db:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: talk2db:latest
+    container_name: talk2db
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      ADMIN_ADDR: ":8080"
+      # App DB (metadata store). Defaults to SQLite on a named volume.
+      DB_DRIVER: "sqlite"
+      DB_DSN: "var/db/app.sqlite"
+      TZ: "Asia/Shanghai"
+      # ── To use PostgreSQL instead of SQLite as the app DB ──────────
+      # DB_DRIVER: "pgx"
+      # DB_DSN: "host=postgres port=5432 user=postgres password=postgres dbname=talk2db sslmode=disable"
+      # (and add a `postgres` service below, or point at an external host)
+      #
+      # ── Alternatively, DATABASE_URL auto-switches to pgx ───────────
+      # DATABASE_URL: "host=postgres port=5432 user=postgres password=postgres dbname=talk2db sslmode=disable"
+    volumes:
+      # SQLite DB + logs. Kept outside the container so data survives
+      # image rebuilds. Named volume works on Windows Docker Desktop.
+      - talk2db-data:/app/var
+      # Optional: mount your own skills directory to extend the agent.
+      # - ./skills:/app/skills:ro
+
+volumes:
+  talk2db-data:

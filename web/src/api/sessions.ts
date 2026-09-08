@@ -16,6 +16,7 @@ export interface Message {
   content: string;
   sql?: string;
   toolResults?: string;
+  attachments?: string[];
   createdAt: string;
 }
 

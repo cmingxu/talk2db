@@ -11,7 +11,7 @@ interface Props {
 }
 
 export default function ToolResultBlock({ columns, rows, count, error, filename }: Props) {
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
 
   if (error) {
     return (

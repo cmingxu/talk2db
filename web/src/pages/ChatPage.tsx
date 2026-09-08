@@ -1,68 +1,21 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Send, Loader2, Database } from 'lucide-react';
+import { ArrowLeft, Loader2, Database, FileSpreadsheet } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { useToast } from '../hooks/use-toast';
 import { useSSE } from '../hooks/useSSE';
 import { getSession, getMessages, type Message as Msg } from '../api/sessions';
 import { getDatasource, type Datasource } from '../api/datasources';
 
-import ToolCallBlock from '../components/ToolCallBlock';
 import MessageBlock from '../components/MessageBlock';
-import ToolResultBlock from '../components/ToolResultBlock';
-import EChartsBlock from '../components/EChartsBlock';
 import SqlPlayground from '../components/SqlPlayground';
+import ChatInput from '../components/ChatInput';
+import AssistantToolBlocks from '../components/AssistantToolBlocks';
+import StepBlock, { normalizeToolResult, indexSqlSteps, type StreamStep, type ToolResultEntry } from '../components/StepBlock';
+import { type ExcelAttachment } from '../lib/excel';
 
-interface ToolStep {
-  toolCall: { tool: string; arguments: string };
-  status: 'executing' | 'done' | 'error';
-  toolResult?: {
-    columns?: string[];
-    rows?: string[][];
-    count?: number;
-    error?: string;
-    type?: string;
-    config?: Record<string, unknown>;
-    filename?: string;
-  };
-}
-
-interface ToolResultEntry {
-  tool?: string;
-  type?: string;
-  config?: Record<string, unknown>;
-  columns?: string[];
-  rows?: string[][];
-  count?: number;
-  error?: string;
-  filename?: string;
-}
-
-function renderHistoryToolResults(json: string) {
-  try {
-    const results: ToolResultEntry[] = JSON.parse(json);
-    if (!Array.isArray(results)) return null;
-    return results.map((tr, i) => (
-      <div key={i} className="space-y-2">
-        {tr.tool && tr.tool !== 'execute_sql' && (
-          <ToolCallBlock tool={tr.tool} arguments="" status="done" />
-        )}
-        {tr.type === 'echart' && tr.config ? (
-          <EChartsBlock config={tr.config} />
-        ) : tr.type === 'table' && tr.columns ? (
-          <ToolResultBlock
-            columns={tr.columns}
-            rows={tr.rows}
-            count={tr.count}
-            error={tr.error}
-            filename={tr.filename}
-          />
-        ) : null}
-      </div>
-    ));
-  } catch {
-    return null;
-  }
+interface HistoryMsg extends Msg {
+  steps?: StreamStep[];
 }
 
 export default function ChatPage() {
@@ -73,11 +26,12 @@ export default function ChatPage() {
   const isAdmin = true;
   const backTo = '/admin/sessions';
   const { messages: sseMessages, isStreaming, error: sseError, start: startSSE } = useSSE();
-  const [history, setHistory] = useState<Msg[]>([]);
+  const [history, setHistory] = useState<HistoryMsg[]>([]);
   const [ds, setDs] = useState<Datasource | null>(null);
   const [sessionName, setSessionName] = useState('');
   const [input, setInput] = useState('');
-  const [streamSteps, setStreamSteps] = useState<ToolStep[]>([]);
+  const [attachments, setAttachments] = useState<ExcelAttachment[]>([]);
+  const [streamSteps, setStreamSteps] = useState<StreamStep[]>([]);
   const [streamContent, setStreamContent] = useState('');
   const [playgroundOpen, setPlaygroundOpen] = useState(false);
   const [playgroundSql, setPlaygroundSql] = useState('');
@@ -86,6 +40,7 @@ export default function ChatPage() {
   const autoSentRef = useRef(false);
   const sseProcessedRef = useRef(0);
   const streamContentRef = useRef('');
+  const streamStepsRef = useRef<StreamStep[]>([]);
 
   useEffect(() => {
     if (!id) return;
@@ -105,6 +60,7 @@ export default function ChatPage() {
     autoSentRef.current = true;
     // Short delay so session/datasource data has time to load
     const timer = setTimeout(() => {
+      streamStepsRef.current = [];
       setStreamSteps([]);
       setStreamContent('');
       streamContentRef.current = '';
@@ -120,76 +76,64 @@ export default function ChatPage() {
     sseProcessedRef.current = sseMessages.length;
     for (const m of newMsgs) {
       switch (m.event) {
-
-
-        case 'tool_call':
-          setStreamSteps(prev => [...prev, {
-            toolCall: { tool: m.data.tool, arguments: m.data.arguments },
-            status: 'executing',
-          }]);
+        case 'tool_call': {
+          const step: StreamStep = { tool: m.data.tool, arguments: m.data.arguments, status: 'executing' };
+          streamStepsRef.current = [...streamStepsRef.current, step];
+          setStreamSteps(streamStepsRef.current);
           break;
-        case 'tool_result':
-          setStreamSteps(prev => {
-            const updated = [...prev];
-            const last = updated[updated.length - 1];
-            if (last) {
-              last.status = m.data.error ? 'error' : 'done';
-              last.toolResult = {
-                columns: m.data.columns,
-                rows: m.data.rows,
-                count: m.data.count,
-                error: m.data.error,
-                type: m.data.type,
-                config: m.data.config,
-                filename: m.data.filename,
-              };
-            }
-            return updated;
-          });
+        }
+        case 'tool_result': {
+          const result = normalizeToolResult(m.data);
+          streamStepsRef.current = streamStepsRef.current.map((s, i) =>
+            i === streamStepsRef.current.length - 1
+              ? { ...s, status: (result.error ? 'error' : 'done') as StreamStep['status'], result }
+              : s,
+          );
+          setStreamSteps(streamStepsRef.current);
           break;
+        }
         case 'text':
           setStreamContent(m.data.content || '');
           streamContentRef.current = m.data.content || '';
           break;
         case 'done': {
-          // Build the assistant message locally from streaming data to avoid
-          // the async refetch gap that causes order instability.
           const finalContent = streamContentRef.current;
-          setStreamSteps(prev => {
-            const sqls: string[] = [];
-            const toolResults: ToolResultEntry[] = [];
-            for (const step of prev) {
-              if (step.toolCall.tool === 'execute_sql') {
-                try {
-                  const args = JSON.parse(step.toolCall.arguments);
-                  if (args.query) sqls.push(args.query);
-                } catch { /* ignore parse errors */ }
-              }
-              if (step.toolResult) {
-                toolResults.push({
-                  tool: step.toolCall.tool,
-                  type: step.toolResult.type,
-                  config: step.toolResult.config,
-                  columns: step.toolResult.columns,
-                  rows: step.toolResult.rows,
-                  count: step.toolResult.count,
-                  error: step.toolResult.error,
-                  filename: step.toolResult.filename,
-                });
-              }
+          const steps = streamStepsRef.current;
+          const sqls: string[] = [];
+          const toolResults: ToolResultEntry[] = [];
+          for (const step of steps) {
+            if (step.tool === 'execute_sql') {
+              try {
+                const args = JSON.parse(step.arguments);
+                if (args.query) sqls.push(args.query);
+              } catch { /* ignore */ }
             }
-            const assistantMsg: Msg = {
-              id: Date.now(),
-              sessionId: Number(id),
-              role: 'assistant',
-              content: finalContent,
-              sql: sqls.length > 0 ? sqls.join(';\n') : undefined,
-              toolResults: toolResults.length > 0 ? JSON.stringify(toolResults) : undefined,
-              createdAt: new Date().toISOString(),
-            };
-            setHistory(prev => [...prev, assistantMsg]);
-            return [];
-          });
+            if (step.result) {
+              toolResults.push({
+                tool: step.tool,
+                type: step.result.type,
+                config: step.result.config,
+                columns: step.result.columns,
+                rows: step.result.rows,
+                count: step.result.count,
+                error: step.result.error,
+                filename: step.result.filename,
+              });
+            }
+          }
+          const assistantMsg: HistoryMsg = {
+            id: Date.now(),
+            sessionId: Number(id),
+            role: 'assistant',
+            content: finalContent,
+            sql: sqls.length > 0 ? sqls.join(';\n') : undefined,
+            toolResults: toolResults.length > 0 ? JSON.stringify(toolResults) : undefined,
+            steps,
+            createdAt: new Date().toISOString(),
+          };
+          setHistory(prev => [...prev, assistantMsg]);
+          streamStepsRef.current = [];
+          setStreamSteps([]);
           setStreamContent('');
           streamContentRef.current = '';
           break;
@@ -209,23 +153,25 @@ export default function ChatPage() {
 
   const handleSend = () => {
     if (!input.trim() || isStreaming || !id) return;
+    const text = input.trim();
+    const atts = attachments;
+    const fileNames = atts.map(a => a.filename);
+    streamStepsRef.current = [];
     setStreamSteps([]);
     setStreamContent('');
     streamContentRef.current = '';
     sseProcessedRef.current = 0;
-    setHistory(prev => [...prev, { id: 0, sessionId: Number(id), role: 'user', content: input, createdAt: new Date().toISOString() }]);
-    startSSE(`/api/sessions/${id}/chat`, { message: input });
+    setHistory(prev => [...prev, { id: 0, sessionId: Number(id), role: 'user', content: text, attachments: fileNames, createdAt: new Date().toISOString() }]);
+    const body = atts.length > 0 ? { message: text, attachments: atts } : { message: text };
+    startSSE(`/api/sessions/${id}/chat`, body);
     setInput('');
+    setAttachments([]);
   };
 
   const handleOpenPlayground = useCallback((sql: string) => {
     setPlaygroundSql(sql);
     setPlaygroundOpen(true);
   }, []);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSend(); }
-  };
 
   const hasStreaming = isStreaming || streamSteps.length > 0 || streamContent;
 
@@ -254,6 +200,16 @@ export default function ChatPage() {
                 <div className="flex justify-end">
                   <div className="max-w-[80%] rounded-lg px-4 py-2 bg-primary text-primary-foreground">
                     <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {msg.attachments.map((name, i) => (
+                          <span key={i} className="inline-flex items-center gap-1 rounded bg-white/20 px-1.5 py-0.5 text-[11px]">
+                            <FileSpreadsheet className="h-3 w-3" />
+                            {name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     <div className="text-xs opacity-70 mt-1">
                       {new Date(msg.createdAt).toLocaleTimeString()}
                     </div>
@@ -261,15 +217,17 @@ export default function ChatPage() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {msg.sql && (
-                    <ToolCallBlock
-                      tool="execute_sql"
-                      arguments={JSON.stringify({ query: msg.sql.split(';\n')[0] })}
-                      status="done"
+                  {msg.steps && msg.steps.length > 0 ? (
+                    indexSqlSteps(msg.steps).map((step, i) => (
+                      <StepBlock key={i} step={step} onExecuteSql={isAdmin ? handleOpenPlayground : undefined} />
+                    ))
+                  ) : (
+                    <AssistantToolBlocks
+                      sql={msg.sql}
+                      toolResults={msg.toolResults}
                       onExecuteSql={isAdmin ? handleOpenPlayground : undefined}
                     />
                   )}
-                  {msg.toolResults && renderHistoryToolResults(msg.toolResults)}
                   <MessageBlock content={msg.content} />
                   <div className="text-xs text-muted-foreground">
                     {new Date(msg.createdAt).toLocaleTimeString()}
@@ -283,46 +241,20 @@ export default function ChatPage() {
           {hasStreaming && (
             <div className="space-y-3">
               {/* Tool calls and results during streaming */}
-              {streamSteps.map((step, i) => (
-                <div key={i} className="space-y-2">
-                  <ToolCallBlock
-                    tool={step.toolCall.tool}
-                    arguments={step.toolCall.arguments}
-                    status={step.status}
-                    onExecuteSql={
-                      isAdmin && step.toolCall.tool === 'execute_sql'
-                        ? () => {
-                            try {
-                              const parsed = JSON.parse(step.toolCall.arguments);
-                              if (parsed.query) handleOpenPlayground(parsed.query);
-                            } catch {
-                              handleOpenPlayground(step.toolCall.arguments);
-                            }
-                          }
-                        : undefined
-                    }
-                  />
-                  {step.toolResult && (
-                    step.toolResult.type === 'echart' && step.toolResult.config ? (
-                      <EChartsBlock config={step.toolResult.config} />
-                    ) : (
-                      <ToolResultBlock
-                        columns={step.toolResult.columns}
-                        rows={step.toolResult.rows}
-                        count={step.toolResult.count}
-                        error={step.toolResult.error}
-                        filename={step.toolResult.filename}
-                      />
-                    )
-                  )}
-                </div>
+              {indexSqlSteps(streamSteps).map((step, i) => (
+                <StepBlock
+                  key={i}
+                  step={step}
+                  onExecuteSql={isAdmin ? handleOpenPlayground : undefined}
+                />
               ))}
               {streamContent ? (
                 <MessageBlock content={streamContent} />
               ) : (
-                !streamSteps.length && (
+                isStreaming && (
                   <div className="flex items-center gap-2 text-muted-foreground text-sm">
                     <Loader2 className="h-4 w-4 animate-spin" />
+                    {streamSteps.some(s => s.status === 'executing') ? '执行中...' : '思考中...'}
                   </div>
                 )
               )}
@@ -336,20 +268,16 @@ export default function ChatPage() {
           )}
         </div>
 
-        <div className="flex gap-2 items-end">
-          <textarea
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="输入你的问题... (Enter 换行，Cmd/Ctrl+Enter 发送)"
-            disabled={isStreaming}
-            rows={1}
-            className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm resize-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-          />
-          <Button onClick={handleSend} disabled={isStreaming || !input.trim()}>
-            {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          </Button>
-        </div>
+        <ChatInput
+          value={input}
+          onChange={setInput}
+          onSend={handleSend}
+          attachments={attachments}
+          onAttach={a => setAttachments(prev => [...prev, a])}
+          onRemoveAttachment={i => setAttachments(prev => prev.filter((_, idx) => idx !== i))}
+          isStreaming={isStreaming}
+          placeholder="输入你的问题... (Enter 发送，Shift+Enter 换行)"
+        />
 
       </div>
       {playgroundOpen && ds && (

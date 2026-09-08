@@ -1,16 +1,18 @@
 import { useState } from 'react';
-import { Wrench, Check, Copy, Loader2, Play, ChevronDown } from 'lucide-react';
+import { Wrench, Check, Copy, Loader2, Play, ChevronDown, AlertCircle } from 'lucide-react';
 
 interface Props {
   tool: string;
   arguments: string;
   status: 'executing' | 'done' | 'error';
   onExecuteSql?: (sql: string) => void;
+  /** 1-based index shown next to the tool name, e.g. "#3". */
+  index?: number;
 }
 
-export default function ToolCallBlock({ tool, arguments: args, status, onExecuteSql }: Props) {
+export default function ToolCallBlock({ tool, arguments: args, status, onExecuteSql, index }: Props) {
   const [copied, setCopied] = useState(false);
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(args);
@@ -35,8 +37,12 @@ export default function ToolCallBlock({ tool, arguments: args, status, onExecute
         <ChevronDown className={`h-3 w-3 text-blue-500 transition-transform ${collapsed ? '' : 'rotate-180'}`} />
         <Wrench className="h-3.5 w-3.5 text-blue-600" />
         <span className="text-xs font-medium text-blue-700">{tool}</span>
+        {index !== undefined && (
+          <span className="rounded bg-blue-100 px-1 text-[10px] font-medium text-blue-500">#{index}</span>
+        )}
         {status === 'executing' && <Loader2 className="h-3 w-3 animate-spin text-blue-500 ml-auto" />}
         {status === 'done' && <Check className="h-3 w-3 text-green-500 ml-auto" />}
+        {status === 'error' && <AlertCircle className="h-3 w-3 text-red-500 ml-auto" />}
       </button>
       {!collapsed && sql && (
         <div className="px-3 pb-3">

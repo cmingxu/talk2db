@@ -1,0 +1,24 @@
+# VCS & editor
+.git
+.gitignore
+.DS_Store
+.claude/
+.superpowers/
+
+# Build outputs / caches (regenerated inside the image)
+bin/
+var/
+.gocache/
+.npmcache/
+node_modules/
+web/node_modules/
+web/dist/
+webui/dist/
+
+# Not needed for the image
+docs/
+images/
+cpp-embed-vite/
+stubs-data/
+*.md
+!README.md

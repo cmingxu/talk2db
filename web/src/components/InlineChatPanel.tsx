@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Send, Loader2, MessageSquare, Clock, Expand, Minimize } from 'lucide-react';
+import { Loader2, MessageSquare, Clock, Expand, Minimize, FileSpreadsheet } from 'lucide-react';
 import { useSSE } from '../hooks/useSSE';
 import { useToast } from '../hooks/use-toast';
 import {
@@ -7,38 +7,13 @@ import {
   type Message as Msg, type RecentSession,
 } from '../api/sessions';
 import MessageBlock from './MessageBlock';
-import ToolCallBlock from './ToolCallBlock';
-import ToolResultBlock from './ToolResultBlock';
-import EChartsBlock from './EChartsBlock';
+import ChatInput from './ChatInput';
+import AssistantToolBlocks from './AssistantToolBlocks';
+import StepBlock, { normalizeToolResult, indexSqlSteps, type StreamStep, type ToolResultEntry } from './StepBlock';
+import { type ExcelAttachment } from '../lib/excel';
 
-interface ToolResultEntry {
-  tool?: string;
-  type?: string;
-  config?: Record<string, unknown>;
-  columns?: string[];
-  rows?: string[][];
-  count?: number;
-  error?: string;
-  filename?: string;
-}
-
-function renderHistoryToolResults(json: string) {
-  try {
-    const results: ToolResultEntry[] = JSON.parse(json);
-    if (!Array.isArray(results)) return null;
-    return results.map((tr, i) => (
-      <div key={i} className="space-y-2">
-        {tr.tool && tr.tool !== 'execute_sql' && <ToolCallBlock tool={tr.tool} arguments="" status="done" />}
-        {tr.type === 'echart' && tr.config ? (
-          <EChartsBlock config={tr.config} />
-        ) : tr.type === 'table' && tr.columns ? (
-          <ToolResultBlock columns={tr.columns} rows={tr.rows} count={tr.count} error={tr.error} filename={tr.filename} />
-        ) : null}
-      </div>
-    ));
-  } catch {
-    return null;
-  }
+interface HistoryMsg extends Msg {
+  steps?: StreamStep[];
 }
 
 interface Props {
@@ -50,16 +25,18 @@ interface Props {
 export default function InlineChatPanel({ datasourceId, onToggleFullscreen, isFullscreen }: Props) {
   const { toast } = useToast();
   const { messages: sseMessages, isStreaming, error: sseError, start: startSSE } = useSSE();
-  const [history, setHistory] = useState<Msg[]>([]);
+  const [history, setHistory] = useState<HistoryMsg[]>([]);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [sessionName, setSessionName] = useState('');
   const [recent, setRecent] = useState<RecentSession[]>([]);
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState<ExcelAttachment[]>([]);
   const [streamContent, setStreamContent] = useState('');
-  const [streamSteps, setStreamSteps] = useState<Array<{ tool: string; arguments: string; status: string; result?: any }>>([]);
+  const [streamSteps, setStreamSteps] = useState<StreamStep[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sseProcessedRef = useRef(0);
   const streamContentRef = useRef('');
+  const streamStepsRef = useRef<StreamStep[]>([]);
 
   useEffect(() => {
     getRecentSessions()
@@ -73,6 +50,7 @@ export default function InlineChatPanel({ datasourceId, onToggleFullscreen, isFu
       setSessionId(id);
       setSessionName(s.name);
       setHistory(await getMessages(id));
+      streamStepsRef.current = [];
       setStreamSteps([]);
       setStreamContent('');
       sseProcessedRef.current = 0;
@@ -87,61 +65,66 @@ export default function InlineChatPanel({ datasourceId, onToggleFullscreen, isFu
     sseProcessedRef.current = sseMessages.length;
     for (const m of newMsgs) {
       switch (m.event) {
-        case 'tool_call':
-          setStreamSteps(prev => [...prev, { tool: m.data.tool, arguments: m.data.arguments, status: 'executing' }]);
+        case 'tool_call': {
+          const step: StreamStep = { tool: m.data.tool, arguments: m.data.arguments, status: 'executing' };
+          streamStepsRef.current = [...streamStepsRef.current, step];
+          setStreamSteps(streamStepsRef.current);
           break;
-        case 'tool_result':
-          setStreamSteps(prev => {
-            const updated = [...prev];
-            const last = updated[updated.length - 1];
-            if (last) {
-              last.status = m.data.error ? 'error' : 'done';
-              last.result = m.data;
-            }
-            return updated;
-          });
+        }
+        case 'tool_result': {
+          const result = normalizeToolResult(m.data);
+          streamStepsRef.current = streamStepsRef.current.map((s, i) =>
+            i === streamStepsRef.current.length - 1
+              ? { ...s, status: (result.error ? 'error' : 'done') as StreamStep['status'], result }
+              : s,
+          );
+          setStreamSteps(streamStepsRef.current);
           break;
+        }
         case 'text':
           setStreamContent(m.data.content || '');
           streamContentRef.current = m.data.content || '';
           break;
         case 'done': {
           const finalContent = streamContentRef.current;
-          setStreamSteps(prev => {
-            const toolResults: ToolResultEntry[] = [];
-            const sqls: string[] = [];
-            for (const step of prev) {
-              if (step.tool === 'execute_sql') {
-                try {
-                  const args = JSON.parse(step.arguments);
-                  if (args.query) sqls.push(args.query);
-                } catch { /* ignore */ }
-              }
-              if (step.result) {
-                toolResults.push({
-                  tool: step.tool,
-                  type: step.result.type,
-                  config: step.result.config,
-                  columns: step.result.columns,
-                  rows: step.result.rows,
-                  count: step.result.count,
-                  error: step.result.error,
-                  filename: step.result.filename,
-                });
-              }
+          const steps = streamStepsRef.current;
+
+          const sqls: string[] = [];
+          const toolResults: ToolResultEntry[] = [];
+          for (const step of steps) {
+            if (step.tool === 'execute_sql') {
+              try {
+                const args = JSON.parse(step.arguments);
+                if (args.query) sqls.push(args.query);
+              } catch { /* ignore */ }
             }
-            const assistantMsg: Msg = {
-              id: Date.now(),
-              sessionId: sessionId ?? 0,
-              role: 'assistant',
-              content: finalContent,
-              sql: sqls.length > 0 ? sqls.join(';\n') : undefined,
-              toolResults: toolResults.length > 0 ? JSON.stringify(toolResults) : undefined,
-              createdAt: new Date().toISOString(),
-            };
-            setHistory(prev => [...prev, assistantMsg]);
-            return [];
-          });
+            if (step.result) {
+              toolResults.push({
+                tool: step.tool,
+                type: step.result.type,
+                config: step.result.config,
+                columns: step.result.columns,
+                rows: step.result.rows,
+                count: step.result.count,
+                error: step.result.error,
+                filename: step.result.filename,
+              });
+            }
+          }
+
+          const assistantMsg: HistoryMsg = {
+            id: Date.now(),
+            sessionId: sessionId ?? 0,
+            role: 'assistant',
+            content: finalContent,
+            sql: sqls.length > 0 ? sqls.join(';\n') : undefined,
+            toolResults: toolResults.length > 0 ? JSON.stringify(toolResults) : undefined,
+            steps,
+            createdAt: new Date().toISOString(),
+          };
+          setHistory(prev => [...prev, assistantMsg]);
+          streamStepsRef.current = [];
+          setStreamSteps([]);
           setStreamContent('');
           streamContentRef.current = '';
           break;
@@ -160,7 +143,7 @@ export default function InlineChatPanel({ datasourceId, onToggleFullscreen, isFu
   const handleSend = async () => {
     const text = input.trim();
     if (!text || isStreaming) return;
-    setInput('');
+    const atts = attachments;
     let sid = sessionId;
     try {
       if (!sid) {
@@ -174,12 +157,17 @@ export default function InlineChatPanel({ datasourceId, onToggleFullscreen, isFu
       toast({ title: '错误', description: e.message, variant: 'destructive' });
       return;
     }
+    setInput('');
+    setAttachments([]);
+    const fileNames = atts.map(a => a.filename);
+    streamStepsRef.current = [];
     setStreamSteps([]);
     setStreamContent('');
     streamContentRef.current = '';
     sseProcessedRef.current = 0;
-    setHistory(prev => [...prev, { id: Date.now(), sessionId: sid!, role: 'user', content: text, createdAt: new Date().toISOString() }]);
-    startSSE(`/api/sessions/${sid}/chat`, { message: text });
+    setHistory(prev => [...prev, { id: Date.now(), sessionId: sid!, role: 'user', content: text, attachments: fileNames, createdAt: new Date().toISOString() }]);
+    const body = atts.length > 0 ? { message: text, attachments: atts } : { message: text };
+    startSSE(`/api/sessions/${sid}/chat`, body);
   };
 
   const hasStreaming = isStreaming || streamSteps.length > 0 || streamContent;
@@ -227,14 +215,25 @@ export default function InlineChatPanel({ datasourceId, onToggleFullscreen, isFu
               <div className="flex justify-end">
                 <div className="max-w-[85%] rounded-lg px-3 py-1.5 bg-primary text-primary-foreground text-sm whitespace-pre-wrap">
                   {msg.content}
+                  {msg.attachments && msg.attachments.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {msg.attachments.map((name, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 rounded bg-white/20 px-1.5 py-0.5 text-[11px]">
+                          <FileSpreadsheet className="h-3 w-3" />
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
               <div className="space-y-2">
-                {msg.sql && (
-                  <ToolCallBlock tool="execute_sql" arguments={JSON.stringify({ query: msg.sql.split(';\n')[0] })} status="done" />
+                {msg.steps && msg.steps.length > 0 ? (
+                  indexSqlSteps(msg.steps).map((step, i) => <StepBlock key={i} step={step} />)
+                ) : (
+                  <AssistantToolBlocks sql={msg.sql} toolResults={msg.toolResults} />
                 )}
-                {msg.toolResults && renderHistoryToolResults(msg.toolResults)}
                 <MessageBlock content={msg.content} />
               </div>
             )}
@@ -244,25 +243,16 @@ export default function InlineChatPanel({ datasourceId, onToggleFullscreen, isFu
         {/* Streaming */}
         {hasStreaming && (
           <div className="space-y-2">
-            {streamSteps.map((step, i) => (
-              <div key={i} className="space-y-2">
-                <ToolCallBlock tool={step.tool} arguments={step.arguments} status={step.status as any} />
-                {step.result && step.result.type === 'echart' && step.result.config ? (
-                  <EChartsBlock config={step.result.config} />
-                ) : step.result && step.result.columns ? (
-                  <ToolResultBlock
-                    columns={step.result.columns} rows={step.result.rows} count={step.result.count}
-                    error={step.result.error} filename={step.result.filename}
-                  />
-                ) : null}
-              </div>
+            {indexSqlSteps(streamSteps).map((step, i) => (
+              <StepBlock key={i} step={step} />
             ))}
             {streamContent ? (
               <MessageBlock content={streamContent} />
             ) : (
-              !streamSteps.length && (
+              isStreaming && (
                 <div className="flex items-center gap-2 text-muted-foreground text-xs">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> 思考中...
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {streamSteps.some(s => s.status === 'executing') ? '执行中...' : '思考中...'}
                 </div>
               )
             )}
@@ -280,26 +270,16 @@ export default function InlineChatPanel({ datasourceId, onToggleFullscreen, isFu
 
       {/* Input */}
       <div className="border-t p-2 shrink-0">
-        <textarea
+        <ChatInput
           value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSend(); }
-          }}
-          rows={2}
-          placeholder="输入问题… (⌘/Ctrl+Enter 发送)"
-          className="w-full rounded-md border border-input bg-background px-2.5 py-2 text-sm resize-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onChange={setInput}
+          onSend={handleSend}
+          attachments={attachments}
+          onAttach={a => setAttachments(prev => [...prev, a])}
+          onRemoveAttachment={i => setAttachments(prev => prev.filter((_, idx) => idx !== i))}
+          isStreaming={isStreaming}
+          placeholder="输入问题… (Enter 发送，Shift+Enter 换行)"
         />
-        <div className="flex justify-end mt-1.5">
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || isStreaming}
-            className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isStreaming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-            发送
-          </button>
-        </div>
       </div>
     </div>
   );
